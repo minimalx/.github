@@ -1,0 +1,8 @@
+{
+    "name": "Minimal X Ltd. Organization CI",
+    "description": "Minimal X Ltd. Organization CI template for GitHub Actions",
+    "iconName": "C_Programming_Language",
+    "categories": [
+        "C"
+    ]
+}
