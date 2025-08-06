@@ -14,9 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-
-      - name: Run version check
+      - name: Version Check
         id: check
-        run: python scripts/version_check.py
+        uses: ./.github/actions/version-check

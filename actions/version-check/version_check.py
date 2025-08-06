@@ -76,10 +76,10 @@ def main():
     # If version is valid, emit tag for downstream jobs
     tag = f"Release_{current_version['major']}_{current_version['minor']}_{current_version['patch']}"
 
-    github_output = os.environ.get("GITHUB_OUTPUT")
-    if github_output:
-        with open(github_output, "a") as f:
-            f.write(f"version_tag={tag}\n")
+    # At end of script
+    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+        f.write(f"version_tag={tag}\n")
+
 
     print(f"✅ Valid version bump. Outputting version tag: {tag}")
 
