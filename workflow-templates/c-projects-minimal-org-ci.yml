@@ -9,7 +9,9 @@ on:
 jobs:
   version:
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.expose.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -23,14 +25,21 @@ jobs:
           major_pattern: "(MAJOR)"
           minor_pattern: "(MINOR)"
           enable_prerelease_mode: ${{ github.event_name == 'pull_request' }}
-          version_format: "${major}.${minor}.${patch}${prerelease}"
+          version_format: ${{ github.ref == 'refs/heads/main' && '${major}.${minor}.${patch}' || '${major}.${minor}.${patch}-dev${increment}' }}
 
-      - name: Set VERSION env var
-        run: echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
-
-      - name: Print Version (for debug/logging)
+      - name: Export Version to Environment
         run: |
-          echo "Computed version: $VERSION"
+          echo "VERSION=${{ steps.version.outputs.version }}"
+          echo "VERSION_TAG=${{ steps.version.outputs.version_tag }}"
+          echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
+          echo "VERSION_TAG=${{ steps.version.outputs.version_tag }}" >> $GITHUB_ENV
+
+      - name: Expose version as output
+        id: expose
+        run: |
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Generate version.h (C version)
         run: |
@@ -59,15 +68,20 @@ jobs:
 
           cat version.h
 
-
-      # 🏷️ Tag and push only on merge to main
-      - name: Create Git Tag on main
-        if: github.ref == 'refs/heads/main'
+  tag:
+    if: github.ref == 'refs/heads/main'
+    needs:
+      - version
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Create Tag
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -a "${{ needs.version.outputs.version_tag }}" -m "Release ${{ needs.version.outputs.version_tag }}"
+          git push origin "${{ needs.version.outputs.version_tag }}"
 
   formatting-check:
       name: Formatting Check
@@ -111,4 +125,18 @@ jobs:
               echo "Checking: $file"
               clang-format-20 --dry-run --Werror "$file"
             done
-          
+
+  build:
+      name: Build and Upload Firmware
+      runs-on: ubuntu-latest
+      needs:
+        - version
+        - formatting-check
+
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v3
+
+        - name: Build firmware
+          run: |
+            echo "Building firmware with version ${{ needs.version.outputs.version }}"
