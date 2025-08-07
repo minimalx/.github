@@ -13,42 +13,61 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Required for tag history
+          fetch-depth: 0  # Needed to access previous tags
 
-      - name: Calculate Semantic Version
+      - name: Calculate Version (PR or Push)
         id: version
         uses: paulhatch/semantic-version@v5.4.0
         with:
           tag_prefix: "v"
           major_pattern: "(MAJOR)"
           minor_pattern: "(MINOR)"
-          format: |
-            ${major}.${minor}.${patch}-prerelease.${increment}
+          enable_prerelease_mode: ${{ github.event_name == 'pull_request' }}
+          version_format: "${major}.${minor}.${patch}${prerelease}"
 
-      # 🧪 Set version for PR builds
-      - name: Set prerelease version (PRs)
-        if: github.event_name == 'pull_request'
+      - name: Set VERSION env var
         run: echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
 
-      # ✅ Clean version + tagging logic for main
-      - name: Set clean version (main)
-        if: github.ref == 'refs/heads/main'
+      - name: Print Version (for debug/logging)
         run: |
-          echo "VERSION=${{ steps.version.outputs.version_tag }}" >> $GITHUB_ENV
+          echo "Computed version: $VERSION"
 
-      - name: Create Git tag on main
+      - name: Generate version.h (C version)
+        run: |
+          MAJOR=${VERSION%%.*}
+          REMAINDER=${VERSION#*.}
+          MINOR=${REMAINDER%%.*}
+          PATCH=${REMAINDER#*.}
+          PATCH=${PATCH%%-*}
+          DATE=$(date -u +"%Y-%m-%d")
+          AUTHOR="${{ github.actor }}"
+
+          {
+            echo "#ifndef VERSION_H"
+            echo "#define VERSION_H"
+            echo ""
+            echo "#define VERSION_MAJOR   $MAJOR"
+            echo "#define VERSION_MINOR   $MINOR"
+            echo "#define VERSION_PATCH   $PATCH"
+            echo ""
+            echo "static const char VERSION_STR[]      = \"v$VERSION\";"
+            echo "static const char VERSION_DATE_STR[] = \"$DATE\";"
+            echo "static const char VERSION_AUTHOR[]   = \"$AUTHOR\";"
+            echo ""
+            echo "#endif // VERSION_H"
+          } > version.h
+
+          cat version.h
+
+
+      # 🏷️ Tag and push only on merge to main
+      - name: Create Git Tag on main
         if: github.ref == 'refs/heads/main'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git tag $VERSION
-          git push origin $VERSION
-
-      # 💡 Inject version into your build
-      - name: Inject version into build
-        run: |
-          echo "Build version: $VERSION"
-          echo "$VERSION" > build/version.txt
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
 
 
   build:
@@ -70,7 +89,7 @@ jobs:
           fetch-depth: 0
 
       - name: Super-linter
-        uses: super-linter/super-linter@v8.0.0 # x-release-please-version
+        uses: super-linter/super-linter@v8.0.0
         env:
           # To report GitHub Actions status checks
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
