@@ -1,4 +1,11 @@
 name: C Project CI/CD
+
+# Global anchors (YAML-level, not GH env for `uses:`)
+env:
+  SUBMODULE_DIR: &SUBMODULE_DIR workflow-templates
+  VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version
+  FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/formatting
+
 on:
   pull_request:
     branches: [ $default-branch ]
@@ -6,21 +13,48 @@ on:
     branches: [ $default-branch ]
 
 jobs:
-  version-format:
+  version:
+    name: Version & headers
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.c.outputs.version }}
-      version_tag: ${{ steps.c.outputs.version-tag }}
+      version: ${{ steps.ver.outputs.version }}
+      version_tag: ${{ steps.ver.outputs.version_tag }}
     steps:
-      - name: Run C CI helpers
-        id: c
-        uses: minimal/.github/actions/c-actions@main
+      - name: Checkout (tags + submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # needed for semantic-version to see tags
+          submodules: recursive   # to pull your local actions submodules
+
+      - name: Version
+        id: ver
+        uses: *VERSION_ACTION
         with:
           tag-prefix: "v"
 
+  formatting:
+    name: Formatting Check
+    runs-on: ubuntu-latest
+    # Optional: run formatting in parallel to version. If you prefer to wait, add: needs: [version]
+    steps:
+      - name: Checkout (submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Run formatting
+        uses: *FORMATTING_ACTION
+        with:
+          # On push, base_ref is empty; default to main
+          base-ref: ${{ github.event_name == 'pull_request' && github.base_ref || 'main' }}
+          changed-exts: "c,cc,cpp,h,proto"
+
+
   tag:
     if: github.ref == 'refs/heads/main'
-    needs: version-format
+    needs:
+      - build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -32,7 +66,9 @@ jobs:
           git push origin "${{ needs.version-format.outputs.version_tag }}"
 
   build:
-    needs: version-format
+    needs:
+      - version
+      - formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
