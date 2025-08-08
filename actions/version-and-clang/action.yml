@@ -40,13 +40,13 @@ runs:
     - name: Generate version.h
       shell: bash
       run: |
-        python3 "$ACTIONS_PATH/generate_version_h.py" \
+        python3 "${GITHUB_ACTION_PATH}/generate_version_h.py" \
           --version "${{ steps.version.outputs.version }}" \
           --actor "${{ github.actor }}"
 
     - name: Formatting Check
       shell: bash
       run: |
-        python3 "$ACTIONS_PATH/formatting_check.py" \
+        python3 "${GITHUB_ACTION_PATH}/formatting_check.py" \
           --base-ref "${{ github.base_ref }}" \
           --changed-exts "c,cc,cpp,h,proto"
