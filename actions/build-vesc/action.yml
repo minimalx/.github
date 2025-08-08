@@ -49,7 +49,6 @@ runs:
         set -euo pipefail
         VERSION="${{ inputs.version }}"
         OUTDIR="${{ inputs.build-dir }}"
-
         echo "Renaming artifacts in ${OUTDIR} with version v${VERSION}"
         shopt -s nullglob
         found=0
@@ -70,10 +69,10 @@ runs:
         ls -lh "${{ inputs.build-dir }}"
 
     - name: Upload .bin and .elf artifacts
-      shell: bash
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.artifact-name }}
         path: |
           ${{ inputs.build-dir }}/*.bin
           ${{ inputs.build-dir }}/*.elf
+        if-no-files-found: error
