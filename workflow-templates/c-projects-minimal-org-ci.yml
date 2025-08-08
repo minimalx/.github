@@ -3,8 +3,8 @@ name: C Project CI/CD
 # Global anchors (YAML-level, not GH env for `uses:`)
 env:
   SUBMODULE_DIR: &SUBMODULE_DIR workflow-templates
-  VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version
-  FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/formatting
+  VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version-c
+  FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/clang-format-check
 
 on:
   pull_request:
