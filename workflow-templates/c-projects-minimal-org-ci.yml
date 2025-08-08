@@ -28,8 +28,8 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name  "GitHub Action"
-          git tag -a "${{ needs.ci.outputs.version_tag }}" -m "Release ${{ needs.ci.outputs.version_tag }}"
-          git push origin "${{ needs.ci.outputs.version_tag }}"
+          git tag -a "${{ needs.version-format.outputs.version_tag }}" -m "Release ${{ needs.version-format.outputs.version_tag }}"
+          git push origin "${{ needs.version-format.outputs.version_tag }}"
 
   build:
     needs: version-format
@@ -38,4 +38,4 @@ jobs:
       - uses: actions/checkout@v3
       - name: Build Firmware
         run: |
-          echo "Building firmware version ${{ needs.ci.outputs.version }}"
+          echo "Building firmware version ${{ needs.version-format.outputs.version }}"
