@@ -24,11 +24,6 @@ def main():
         print("No C/C++/Proto files changed, skipping formatting check.")
         return
 
-    # Install clang-format
-    subprocess.run(['sudo', 'bash', '-c', 'wget -O - https://apt.llvm.org/llvm.sh | bash -s system'], shell=True, check=True)
-    subprocess.run(['sudo', 'apt-get', 'install', '-y', 'clang-format-20'], check=True)
-    subprocess.run(['clang-format-20', '--version'], check=True)
-
     print("Running clang-format style check:")
     for f in files:
         print(f"Checking: {f}")
