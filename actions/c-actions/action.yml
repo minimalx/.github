@@ -1,4 +1,4 @@
-# File: .github/actions/c-ci/action.yml
+# File: .github/actions/c-actions/action.yml
 name: "Minimal C CI helper"
 description: "Composite action to handle versioning, generating version.h, formatting check"
 inputs:
