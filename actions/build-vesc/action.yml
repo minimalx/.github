@@ -1,0 +1,79 @@
+name: "Minimal C: Build VESC"
+description: "Build VESC firmware, rename outputs with version, upload artifacts"
+
+inputs:
+  version:
+    description: "Version string to append to artifact filenames (e.g. 1.2.3)"
+    required: true
+  install-target:
+    description: "Make target to install toolchain/deps"
+    required: false
+    default: "arm_sdk_install"
+  make-target:
+    description: "Firmware make target"
+    required: false
+    default: "fw_60_mk6_hp"
+  build-dir:
+    description: "Directory where .bin/.elf are produced"
+    required: false
+    default: "build/60_mk6_hp"
+  artifact-name:
+    description: "Name of the uploaded artifact bundle"
+    required: false
+    default: "firmware-artifacts"
+  checkout-submodules:
+    description: "Pass 'recursive' to enable submodule checkout"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: ${{ inputs.checkout-submodules }}
+
+    - name: Build firmware
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo ">>> make ${{ inputs.install-target }}"
+        make "${{ inputs.install-target }}"
+        echo ">>> make ${{ inputs.make-target }}"
+        make "${{ inputs.make-target }}"
+
+    - name: Rename .bin and .elf files to include version
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.version }}"
+        OUTDIR="${{ inputs.build-dir }}"
+
+        echo "Renaming artifacts in ${OUTDIR} with version v${VERSION}"
+        shopt -s nullglob
+        found=0
+        for file in "${OUTDIR}"/*.{bin,elf}; do
+          found=1
+          ext="${file##*.}"
+          base="$(basename "$file" ."$ext")"
+          mv "$file" "${OUTDIR}/${base}_v${VERSION}.${ext}"
+        done
+        if [[ $found -eq 0 ]]; then
+          echo "No .bin or .elf files found in ${OUTDIR}"
+          exit 1
+        fi
+
+    - name: List build outputs
+      shell: bash
+      run: |
+        ls -lh "${{ inputs.build-dir }}"
+
+    - name: Upload .bin and .elf artifacts
+      shell: bash
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ inputs.build-dir }}/*.bin
+          ${{ inputs.build-dir }}/*.elf
