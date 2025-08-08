@@ -32,17 +32,20 @@ runs:
           ${{ github.ref == 'refs/heads/main' && '${major}.${minor}.${patch}' || '${major}.${minor}.${patch}-dev${increment}' }}
 
     - name: Export Version to Environment
+      shell: bash
       run: |
         echo "VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
         echo "VERSION_TAG=${{ steps.version.outputs.version_tag }}" >> $GITHUB_ENV
 
     - name: Generate version.h
+      shell: bash
       run: |
         python3 "$ACTIONS_PATH/generate_version_h.py" \
           --version "${{ steps.version.outputs.version }}" \
           --actor "${{ github.actor }}"
 
     - name: Formatting Check
+      shell: bash
       run: |
         python3 "$ACTIONS_PATH/formatting_check.py" \
           --base-ref "${{ github.base_ref }}" \
