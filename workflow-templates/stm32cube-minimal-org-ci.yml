@@ -5,6 +5,7 @@ env:
   SUBMODULE_DIR: &SUBMODULE_DIR workflow-templates
   VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version-c
   FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/clang-format-check
+  BUILD_ACTION: &BUILD_ACTION ./workflow-templates/actions/build-stm32
 
 on:
   pull_request:
@@ -55,6 +56,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs:
       - build
+      - version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -65,17 +67,24 @@ jobs:
           git tag -a "${{ needs.ver.outputs.version_tag }}" -m "Release ${{ needs.ver.outputs.version_tag }}"
           git push origin "${{ needs.ver.outputs.version_tag }}"
 
-  build:
+  build-dev:
+    on:
+      pull_request:
+        branches: [ $default-branch ]
     needs:
       - version
       - formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - name: Checkout (submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      
       # Build with STM32CubeIDE inside Docker via the maintained action
       - name: Build (Debug)
-        uses: xanderhendriks/action-build-stm32cubeide@v15.0
+        uses: *BUILD_ACTION
         with:
           project-path: .
           project-target: nfc3/Debug
@@ -84,7 +93,39 @@ jobs:
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: firmware
+          name: build_debug_${{ needs.ver.outputs.version }}
+          path: |
+            **/*.elf
+            **/*.bin
+            **/*.hex
+
+  build-prod:
+    on:
+      push:
+        branches: [ $default-branch ]
+    needs:
+      - version
+      - formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      
+      # Build with STM32CubeIDE inside Docker via the maintained action
+      - name: Build (Release)
+        uses: *BUILD_ACTION
+        with:
+          project-path: .
+          project-target: nfc3/Release
+
+      # Collect firmware artifacts
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build_debug_${{ needs.ver.outputs.version }}
           path: |
             **/*.elf
             **/*.bin
