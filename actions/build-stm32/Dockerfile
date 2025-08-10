@@ -1,17 +1,25 @@
 # Container image that runs your code
 FROM xanderhendriks/stm32cubeide:15.0
 
-# The requirements come from the Middlewares\ST\STM32_Secure_Engine\Utilities\KeysAndImages\ directory
-# in the sitehive-stm32-sbsfu repo
+# Tools your script needs
 RUN apt-get -y update && \
-    apt-get -y install curl python3 python3-pycryptodome python3-ecdsa python3-pyelftools python3-numpy git && \
-    ln -s $(which python3) /usr/bin/python
+    apt-get -y install curl python3 python3-pycryptodome python3-ecdsa python3-pyelftools python3-numpy git srecord ca-certificates \
+    && ln -s $(which python3) /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y --no-install-recommends srecord \
- && rm -rf /var/lib/apt/lists/*
+# If your entrypoint uses bash, uncomment this line:
+# RUN apt-get update && apt-get install -y --no-install-recommends bash && rm -rf /var/lib/apt/lists/*
 
-# Copies your code file from your action repository to the filesystem path `/` of the container
+# Copy and normalize the entrypoint
 COPY entrypoint.sh /entrypoint.sh
 
-# Code file to execute when the docker container starts up (`entrypoint.sh`)
+# Strip CRLF if the file was committed with Windows line endings,
+# remove a possible UTF-8 BOM, and make it executable & world-readable.
+RUN awk 'NR==1{sub(/^\xEF\xBB\xBF/,"")}{gsub(/\r$/,"")}1' /entrypoint.sh > /entrypoint.fixed && \
+    cat /entrypoint.fixed > /entrypoint.sh && rm /entrypoint.fixed && \
+    chmod 0755 /entrypoint.sh && \
+    chown root:root /entrypoint.sh && \
+    # (Optional but handy) verify at build-time:
+    /bin/sh -c 'ls -l /entrypoint.sh && head -n1 /entrypoint.sh && file /entrypoint.sh'
+
 ENTRYPOINT ["/entrypoint.sh"]
