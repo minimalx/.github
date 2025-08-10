@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from datetime import datetime
+from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser()
@@ -20,16 +21,21 @@ def main():
 #define VERSION_MINOR   {minor}
 #define VERSION_PATCH   {patch}
 
-static const char VERSION_STR[]      = \"v{version}\";
-static const char VERSION_DATE_STR[] = \"{date}\";
-static const char VERSION_AUTHOR[]   = \"{args.actor}\";
+static const char VERSION_STR[]      = "v{version}";
+static const char VERSION_DATE_STR[] = "{date}";
+static const char VERSION_AUTHOR[]   = "{args.actor}";
 
 #endif // VERSION_H
 """
 
-    with open('version.h', 'w') as f:
+    # Check for Core/Inc directory
+    target_dir = Path("Core/Inc") if Path("Core/Inc").is_dir() else Path(".")
+    target_file = target_dir / "version.h"
+
+    with open(target_file, 'w') as f:
         f.write(content)
 
+    print(f"Wrote version.h to {target_file}")
     print(content)
 
 if __name__ == '__main__':
