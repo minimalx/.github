@@ -66,8 +66,8 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name  "GitHub Action"
-          git tag -a "${{ needs.ver.outputs.version_tag }}" -m "Release ${{ needs.ver.outputs.version_tag }}"
-          git push origin "${{ needs.ver.outputs.version_tag }}"
+          git tag -a "${{ needs.version.outputs.version_tag }}" -m "Release ${{ needs.version.outputs.version_tag }}"
+          git push origin "${{ needs.version.outputs.version_tag }}"
 
   build-dev:
     if: github.event_name == 'pull_request'
@@ -93,7 +93,7 @@ jobs:
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build_debug_${{ needs.ver.outputs.version }}
+          name: build_debug_${{ needs.version.outputs.version_tag }}
           path: |
             **/*.elf
             **/*.bin
@@ -123,7 +123,7 @@ jobs:
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build_debug_${{ needs.ver.outputs.version }}
+          name: build_debug_${{ needs.version.outputs.version_tag }}
           path: |
             **/*.elf
             **/*.bin
