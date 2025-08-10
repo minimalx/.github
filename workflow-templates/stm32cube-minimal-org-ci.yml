@@ -55,7 +55,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs:
       - build
-      - version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -72,7 +71,21 @@ jobs:
       - formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Build Firmware
-        run: |
-          echo "Building firmware version ${{ needs.ver.outputs.version }}"
+      - uses: actions/checkout@v4
+
+      # Build with STM32CubeIDE inside Docker via the maintained action
+      - name: Build (Debug)
+        uses: xanderhendriks/action-build-stm32cubeide@v15.0
+        with:
+          project-path: .
+          project-target: nfc3/Debug
+
+      # Collect firmware artifacts
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            **/*.elf
+            **/*.bin
+            **/*.hex
