@@ -18,8 +18,6 @@ COPY entrypoint.sh /entrypoint.sh
 RUN awk 'NR==1{sub(/^\xEF\xBB\xBF/,"")}{gsub(/\r$/,"")}1' /entrypoint.sh > /entrypoint.fixed && \
     cat /entrypoint.fixed > /entrypoint.sh && rm /entrypoint.fixed && \
     chmod 0755 /entrypoint.sh && \
-    chown root:root /entrypoint.sh && \
-    # (Optional but handy) verify at build-time:
-    /bin/sh -c 'ls -l /entrypoint.sh && head -n1 /entrypoint.sh && file /entrypoint.sh'
+    chown root:root /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
