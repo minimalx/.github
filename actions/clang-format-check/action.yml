@@ -1,5 +1,6 @@
 name: "Minimal C: Formatting"
 description: "Install clang-format and check changed files"
+
 inputs:
   base-ref:
     description: "Base ref to diff against (defaults to main if empty)"
@@ -8,11 +9,15 @@ inputs:
     description: "Comma-separated extensions"
     required: false
     default: "c,cc,cpp,h,proto"
+  ignore-files:
+    description: "Comma-separated list of files or glob patterns to ignore (e.g. 'generated/*,*.pb.h')"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
   steps:
-    - name: Instal clang-format-20
+    - name: Install clang-format-20
       shell: bash
       run: |
         sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
@@ -25,6 +30,8 @@ runs:
     - name: Formatting Check
       shell: bash
       run: |
+        BASE_REF="${{ inputs.base-ref }}"
         python3 "${GITHUB_ACTION_PATH}/formatting_check.py" \
-          --base-ref "${{ inputs.base-ref }}" \
-          --changed-exts "${{ inputs.changed-exts }}"
+          --base-ref "${BASE_REF:-main}" \
+          --changed-exts "${{ inputs.changed-exts }}" \
+          --ignore-files "${{ inputs.ignore-files }}"
