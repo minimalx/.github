@@ -4,6 +4,10 @@ inputs:
   tag-prefix:
     description: 'Tag prefix (e.g. "v")'
     required: true
+  project-root:
+    description: 'Folder containing the project (default is root of the repo)'
+    required: false
+    default: "."
 outputs:
   version:
     description: "Calculated semantic version"
@@ -38,3 +42,4 @@ runs:
         python3 "${GITHUB_ACTION_PATH}/generate_version_h.py" \
           --version "${{ steps.version.outputs.version }}" \
           --actor "${{ github.actor }}"
+          --root "${{ inputs.project-root }}"
