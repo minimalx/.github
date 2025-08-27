@@ -41,5 +41,5 @@ runs:
       run: |
         python3 "${GITHUB_ACTION_PATH}/generate_version_h.py" \
           --version "${{ steps.version.outputs.version }}" \
-          --actor "${{ github.actor }}"
+          --actor "${{ github.actor }}" \
           --root "${{ inputs.project-root }}"
