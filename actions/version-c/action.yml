@@ -29,8 +29,8 @@ runs:
       uses: paulhatch/semantic-version@v5.4.0
       with:
         tag_prefix: ${{ inputs.tag-prefix }}
-        major_pattern: "${{ inputs.bump-pattern-prefix }}(MAJOR)"
-        minor_pattern: "${{ inputs.bump-pattern-prefix }}(MINOR)"
+        major_pattern: "(${{ inputs.bump-pattern-prefix }}MAJOR)"
+        minor_pattern: "(${{ inputs.bump-pattern-prefix }}MINOR)"
         enable_prerelease_mode: ${{ github.event_name == 'pull_request' }}
         version_format: ${{ github.ref == 'refs/heads/main' && '${major}.${minor}.${patch}' || '${major}.${minor}.${patch}-dev${increment}' }}
         change_path: ${{ inputs.project-root }}
