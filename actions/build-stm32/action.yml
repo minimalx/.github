@@ -1,16 +1,72 @@
-# action.yml
-name: 'Build STM32CubeIde project'
-description: 'Build the selected target in an STM32CubeIde project'
+#action.yml
+name: 'STM32CubeIDE Build (composite)'
+description: 'Checkout (submodules), fetch version.h, run Docker build, upload artifacts'
 inputs:
-  project-path:  # id of input
-    description: 'Path to STM32CubeIde project'
+  version-art-name:
+    description: 'Artifact name that contains version.h'
     required: true
-  project-target:  # id of input
-    description: 'Which target in the STM32CubeIde project to build. Format: target/[build-configuration]'
+  version-location:
+    description: 'Where to place version.h (e.g., main-app/Core/Inc)'
     required: true
+  project-path:
+    description: 'Path to STM32CubeIDE project (e.g., main-app or bootloader)'
+    required: true
+  project-target:
+    description: 'STM32CubeIDE target in the form target/[build-configuration]'
+    required: true
+  fw_art_name:
+    description: 'Name for the uploaded firmware artifact (can include expressions)'
+    required: true
+  checkout-token:
+    description: 'Token for submodule checkout (defaults to runner token if not provided)'
+    required: false
 runs:
-  using: 'docker'
-  image: 'Dockerfile'
-  args:
-    - ${{ inputs.project-path }}
-    - ${{ inputs.project-target }}
+  using: 'composite'
+  steps:
+    - name: Checkout (with submodules)
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: recursive
+        # Use caller-provided token if set (e.g., your ACTIONS_BOT_PAT), else default GITHUB_TOKEN
+        token: ${{ inputs.checkout-token || github.token }}
+        persist-credentials: false
+
+    - name: Download generated version.h
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.version-art-name }}
+        path: ${{ inputs.version-location }}
+
+    # Build + run the Docker image that contains STM32CubeIDE
+    # Assumes a Dockerfile lives in the same action folder (this directory).
+    - name: Build tool image
+      shell: bash
+      run: |
+        docker build -t stm32cubeide-builder "${GITHUB_ACTION_PATH}"
+
+    - name: Build firmware
+      shell: bash
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        PROJECT_TARGET: ${{ inputs.project-target }}
+      run: |
+        # Mount workspace; pass args expected by your Docker entrypoint
+        docker run --rm \
+          -v "${GITHUB_WORKSPACE}:/workspace" \
+          -w /workspace \
+          stm32cubeide-builder \
+          "${PROJECT_PATH}" "${PROJECT_TARGET}"
+
+    # We don’t assume Debug/Release from project-target; just upload whatever exists.
+    - name: Upload firmware artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.fw_art_name }}
+        path: |
+          ${{ inputs.project-path }}/Debug/*.elf
+          ${{ inputs.project-path }}/Debug/*.bin
+          ${{ inputs.project-path }}/Debug/*.hex
+          ${{ inputs.project-path }}/Release/*.elf
+          ${{ inputs.project-path }}/Release/*.bin
+          ${{ inputs.project-path }}/Release/*.hex
