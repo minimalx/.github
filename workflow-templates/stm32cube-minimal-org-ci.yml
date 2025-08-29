@@ -22,6 +22,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       version_tag: ${{ steps.ver.outputs.version_tag }}
+      changed: ${{ steps.ver.outputs.changed }}
     steps:
       - name: Checkout (tags + submodules)
         uses: actions/checkout@v4
@@ -35,15 +36,15 @@ jobs:
         id: ver
         uses: *VERSION_ACTION
         with:
-          tag-prefix: **HERE PROVIDE A UNIQUE PREFIX e.g. "BCU_MAIN_v"**
-          project-root: **HERE PROVIDE ALOCATION OF THE .project INSIDE THE REPO**
-          bump-pattern-prefix: **HERE PROVIDE A UNIQUE WAY TO BUMP VERSION OF THIS PORJECT**
+          tag-prefix: "SM_APP_v"
+          project-root: main-app
+          bump-pattern-prefix: "MAIN_"
 
       - name: Upload generated version.h
         uses: actions/upload-artifact@v4
         with:
           name: version-header-main
-          path: main-app/Core/Inc/version.h **OR WHEREVER YOUR version.h IS GENERATED**
+          path: main-app/Core/Inc/version.h
 
   version-bl:
     name: Version (bootloader)
@@ -51,6 +52,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       version_tag: ${{ steps.ver.outputs.version_tag }}
+      changed: ${{ steps.ver.outputs.changed }}
     steps:
       - name: Checkout (tags + submodules)
         uses: actions/checkout@v4
@@ -64,15 +66,15 @@ jobs:
         id: ver
         uses: *VERSION_ACTION
         with:
-          tag-prefix: **HERE PROVIDE A UNIQUE PREFIX e.g. "BCU_MAIN_v"**
-          project-root: **HERE PROVIDE ALOCATION OF THE .project INSIDE THE REPO**
-          bump-pattern-prefix: **HERE PROVIDE A UNIQUE WAY TO BUMP VERSION OF THIS PORJECT**
+          tag-prefix: "SM_BL_v"
+          project-root: bootloader
+          bump-pattern-prefix: "BL_"
 
       - name: Upload generated version.h
         uses: actions/upload-artifact@v4
         with:
           name: version-header-bl
-          path: bootloader/Core/Inc/version.h **OR WHEREVER YOUR version.h IS GENERATED**
+          path: bootloader/Core/Inc/version.h
 
   formatting:
     name: Formatting Check
@@ -92,11 +94,11 @@ jobs:
         with:
           # On push, base_ref is empty; default to main
           base-ref: ${{ github.event_name == 'pull_request' && github.base_ref || 'main' }}
-          changed-exts: "c,h,proto"
+          changed-exts: "proto"
 
 
   tag-main:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.version-main.outputs.changed == 'true'
     needs:
       - build-prod-main
       - version-main
@@ -128,7 +130,7 @@ jobs:
           git push origin "refs/tags/${TAG}"
 
   tag-bl:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.version-bl.outputs.changed == 'true'
     needs:
       - build-prod-bl
       - version-bl
@@ -160,7 +162,7 @@ jobs:
           git push origin "refs/tags/${TAG}"
 
   build-dev-main:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.version-main.outputs.changed == 'true'
     needs: [version-main, formatting]
     runs-on: ubuntu-latest
     steps:
@@ -179,10 +181,10 @@ jobs:
           version-location: main-app/Core/Inc
           project-path: main-app
           project-target: *DEV_BUILD_TARGET_MAIN
-          fw_art_name: secmod_main_debug_${{ needs.version-main.outputs.version_tag }}
+          fw_art_name: Debug_${{ needs.version-main.outputs.version_tag }}
 
   build-prod-main:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.version-main.outputs.changed == 'true'
     needs: [version-main, formatting]
     runs-on: ubuntu-latest
     steps:
@@ -201,10 +203,10 @@ jobs:
           version-location: main-app/Core/Inc
           project-path: main-app
           project-target: *PROD_BUILD_TARGET_MAIN
-          fw_art_name: secmod_main_release_${{ needs.version-main.outputs.version_tag }}
+          fw_art_name: Release_${{ needs.version-main.outputs.version_tag }}
 
   build-dev-bl:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.version-bl.outputs.changed == 'true'
     needs: [version-bl, formatting]
     runs-on: ubuntu-latest
     steps:
@@ -223,10 +225,10 @@ jobs:
           version-location: bootloader/Core/Inc
           project-path: bootloader
           project-target: *DEV_BUILD_TARGET_BL
-          fw_art_name: secmod_bl_dev_${{ needs.version-main.outputs.version_tag }}
+          fw_art_name: Debug_${{ needs.version-bl.outputs.version_tag }}
 
   build-prod-bl:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.version-bl.outputs.changed == 'true'
     needs: [version-bl, formatting]
     runs-on: ubuntu-latest
     steps:
@@ -245,4 +247,4 @@ jobs:
           version-location: bootloader/Core/Inc
           project-path: bootloader
           project-target: *PROD_BUILD_TARGET_BL
-          fw_art_name: secmod_bl_release_${{ needs.version-main.outputs.version_tag }}
+          fw_art_name: Release_${{ needs.version-bl.outputs.version_tag }}
