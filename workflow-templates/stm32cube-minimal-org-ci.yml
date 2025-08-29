@@ -16,8 +16,8 @@ on:
     branches: [ $default-branch ]
 
 jobs:
-  version:
-    name: Version & headers
+  version-main:
+    name: Version (main-app)
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -28,12 +28,51 @@ jobs:
         with:
           fetch-depth: 0          # needed for semantic-version to see tags
           submodules: recursive   # to pull your local actions submodules
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
 
       - name: Version
         id: ver
         uses: *VERSION_ACTION
         with:
-          tag-prefix: "v"
+          tag-prefix: **HERE PROVIDE A UNIQUE PREFIX e.g. "BCU_MAIN_v"**
+          project-root: **HERE PROVIDE ALOCATION OF THE .project INSIDE THE REPO**
+          bump-pattern-prefix: **HERE PROVIDE A UNIQUE WAY TO BUMP VERSION OF THIS PORJECT**
+
+      - name: Upload generated version.h
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-header-main
+          path: main-app/Core/Inc/version.h **OR WHEREVER YOUR version.h IS GENERATED**
+
+  version-bl:
+    name: Version (bootloader)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      version_tag: ${{ steps.ver.outputs.version_tag }}
+    steps:
+      - name: Checkout (tags + submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # needed for semantic-version to see tags
+          submodules: recursive   # to pull your local actions submodules
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - name: Version
+        id: ver
+        uses: *VERSION_ACTION
+        with:
+          tag-prefix: **HERE PROVIDE A UNIQUE PREFIX e.g. "BCU_MAIN_v"**
+          project-root: **HERE PROVIDE ALOCATION OF THE .project INSIDE THE REPO**
+          bump-pattern-prefix: **HERE PROVIDE A UNIQUE WAY TO BUMP VERSION OF THIS PORJECT**
+
+      - name: Upload generated version.h
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-header-bl
+          path: bootloader/Core/Inc/version.h **OR WHEREVER YOUR version.h IS GENERATED**
 
   formatting:
     name: Formatting Check
@@ -45,86 +84,165 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: true
 
       - name: Run formatting
         uses: *FORMATTING_ACTION
         with:
           # On push, base_ref is empty; default to main
           base-ref: ${{ github.event_name == 'pull_request' && github.base_ref || 'main' }}
-          changed-exts: "c,cc,cpp,h,proto"
+          changed-exts: "c,h,proto"
 
 
-  tag:
+  tag-main:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     needs:
-      - build-prod
-      - version
+      - build-prod-main
+      - version-main
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to push tags
     steps:
-      - uses: actions/checkout@v3
-      - name: Create Tag
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Create tag if missing
+        env:
+          TAG: ${{ needs.version-main.outputs.version_tag }}
         run: |
+          set -euo pipefail
+
+          # Does the tag exist on the remote already?
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin; skipping."
+            exit 0
+          fi
+
           git config --local user.email "action@github.com"
           git config --local user.name  "GitHub Action"
-          git tag -a "${{ needs.version.outputs.version_tag }}" -m "Release ${{ needs.version.outputs.version_tag }}"
-          git push origin "${{ needs.version.outputs.version_tag }}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "refs/tags/${TAG}"
 
-  build-dev:
-    if: github.event_name == 'pull_request'
-    needs:
-      - version
-      - formatting
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (submodules)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
-      
-      # Build with STM32CubeIDE inside Docker via the maintained action
-      - name: Build (Debug)
-        uses: *BUILD_ACTION
-        with:
-          project-path: .
-          project-target: *DEV_BUILD_TARGET
-
-      # Collect firmware artifacts
-      - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build_debug_${{ needs.version.outputs.version_tag }}
-          path: |
-            **/*.elf
-            **/*.bin
-            **/*.hex
-
-  build-prod:
+  tag-bl:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     needs:
-      - version
-      - formatting
+      - build-prod-bl
+      - version-bl
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to push tags
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Create tag if missing
+        env:
+          TAG: ${{ needs.version-bl.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          # Does the tag exist on the remote already?
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin; skipping."
+            exit 0
+          fi
+
+          git config --local user.email "action@github.com"
+          git config --local user.name  "GitHub Action"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+  build-dev-main:
+    if: github.event_name == 'pull_request'
+    needs: [version-main, formatting]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (submodules)
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
-      
-      # Build with STM32CubeIDE inside Docker via the maintained action
-      - name: Build (Release)
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - name: Build (Debug, main-app)
         uses: *BUILD_ACTION
         with:
-          project-path: .
-          project-target: *PROD_BUILD_TARGET
+          version-art-name: version-header-main
+          version-location: main-app/Core/Inc
+          project-path: main-app
+          project-target: *DEV_BUILD_TARGET_MAIN
+          fw_art_name: secmod_main_debug_${{ needs.version-main.outputs.version_tag }}
 
-      # Collect firmware artifacts
-      - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
+  build-prod-main:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: [version-main, formatting]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
         with:
-          name: build_debug_${{ needs.version.outputs.version_tag }}
-          path: |
-            **/*.elf
-            **/*.bin
-            **/*.hex
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - name: Build (Release, main-app)
+        uses: *BUILD_ACTION
+        with:
+          version-art-name: version-header-main
+          version-location: main-app/Core/Inc
+          project-path: main-app
+          project-target: *PROD_BUILD_TARGET_MAIN
+          fw_art_name: secmod_main_release_${{ needs.version-main.outputs.version_tag }}
+
+  build-dev-bl:
+    if: github.event_name == 'pull_request'
+    needs: [version-bl, formatting]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - name: Build (Debug, bootloader)
+        uses: *BUILD_ACTION
+        with:
+          version-art-name: version-header-bl
+          version-location: bootloader/Core/Inc
+          project-path: bootloader
+          project-target: *DEV_BUILD_TARGET_BL
+          fw_art_name: secmod_bl_dev_${{ needs.version-main.outputs.version_tag }}
+
+  build-prod-bl:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: [version-bl, formatting]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - name: Build (Release, bootloader)
+        uses: *BUILD_ACTION
+        with:
+          version-art-name: version-header-bl
+          version-location: bootloader/Core/Inc
+          project-path: bootloader
+          project-target: *PROD_BUILD_TARGET_BL
+          fw_art_name: secmod_bl_release_${{ needs.version-main.outputs.version_tag }}
