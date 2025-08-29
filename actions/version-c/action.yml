@@ -19,6 +19,9 @@ outputs:
   version_tag:
     description: "Calculated Git tag"
     value: ${{ steps.version.outputs.version_tag }}
+  changed:
+    description: "Whether the version changed"
+    value: ${{ steps.version.outputs.changed }}
 
 runs:
   using: "composite"
