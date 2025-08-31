@@ -57,8 +57,6 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-          token: ${{ secrets.ACTIONS_BOT_PAT }}
-          persist-credentials: false
 
       - name: Create tag from computed version
         uses: *TAG_ACTION
