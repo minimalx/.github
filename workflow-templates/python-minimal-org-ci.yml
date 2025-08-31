@@ -1,4 +1,4 @@
-name: STM32 Project CI/CD
+name: Python Project CI/CD
 
 # Global anchors (YAML-level, not GH env for `uses:`)
 env:

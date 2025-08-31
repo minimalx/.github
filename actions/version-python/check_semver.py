@@ -6,7 +6,28 @@ import sys
 from pathlib import Path
 from packaging.version import Version, InvalidVersion
 
-ROOT = Path(__file__).resolve().parents[2]  # repo root
+# Resolve the repository root robustly, regardless of where the script lives.
+def resolve_repo_root() -> Path:
+    # 1) Use the workspace provided by GitHub Actions if available
+    ws = os.environ.get("GITHUB_WORKSPACE")
+    if ws:
+        return Path(ws).resolve()
+    # 2) Ask git
+    out = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True
+    )
+    if out.returncode == 0:
+        return Path(out.stdout.strip()).resolve()
+    # 3) Fallback: climb until we see a .git folder
+    here = Path(__file__).resolve().parent
+    for p in [here] + list(here.parents):
+        if (p / ".git").exists():
+            return p
+    # Last resort: current dir
+    return Path.cwd().resolve()
+
+ROOT = resolve_repo_root()
 SRC = ROOT / "src"
 
 VERSION_RE = re.compile(r'^__version__\s*=\s*[\'"]([^\'"]+)[\'"]\s*$', re.M)
