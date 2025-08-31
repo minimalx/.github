@@ -64,17 +64,11 @@ jobs:
           tag: ${{ needs.version.outputs.tag }}
   
   test:
-    needs: [formatting, version]
+    needs: [formatting]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Export package version from computed tag
-        run: |
-          TAG='${{ needs.version.outputs.tag }}'
-          # Strip leading "v" for PEP 440 compliance, e.g. v1.2.3.dev5 -> 1.2.3.dev5
-          echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
         run: |
@@ -95,3 +89,4 @@ jobs:
         uses: *BUILD_DEPLOY_PYTHON_ACTION
         with:
           tag: ${{ needs.version.outputs.tag }}
+          package: minimal_can_utils
