@@ -28,17 +28,12 @@ def resolve_repo_root() -> Path:
 
 ROOT = resolve_repo_root()
 SRC = ROOT / "src"
+
 VERSION_RE = re.compile(r'^__version__\s*=\s*[\'"]([^\'"]+)[\'"]\s*$', re.M)
+TAG_SEMVER_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:\.dev(\d+))?$")
 
 def git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], capture_output=True, text=True)
-
-def git_show(path: Path, ref: str) -> str:
-    rel = path.relative_to(ROOT).as_posix()
-    out = git("show", f"{ref}:{rel}")
-    if out.returncode != 0:
-        raise FileNotFoundError(f"Could not read {rel} at {ref}: {out.stderr.strip()}")
-    return out.stdout
 
 def parse_version_from_text(text: str) -> Version:
     m = VERSION_RE.search(text)
@@ -53,9 +48,85 @@ def read_pr_version(path: Path) -> Version:
     text = path.read_text(encoding="utf-8")
     return parse_version_from_text(text)
 
-def read_main_version(path: Path, main_ref: str) -> Version:
-    text = git_show(path, main_ref)
-    return parse_version_from_text(text)
+def list_semver_tags(merged_ref: str | None = None) -> list[tuple[str, Version]]:
+    """
+    Return [(tag_name, Version)] for tags matching vX.Y.Z[.devN].
+    If merged_ref is provided, only include tags whose target commit is merged into that ref.
+    """
+    # Get all tags first (names)
+    out = git("tag", "--list", "v*")
+    if out.returncode != 0:
+        return []
+    tags = [t.strip() for t in out.stdout.splitlines() if t.strip()]
+    if not tags:
+        return []
+
+    # If restricting to those merged into a ref, ask git for merged tags
+    if merged_ref:
+        merged = git("tag", "--merged", merged_ref)
+        if merged.returncode == 0:
+            merged_set = {t.strip() for t in merged.stdout.splitlines() if t.strip()}
+            tags = [t for t in tags if t in merged_set]
+
+    result: list[tuple[str, Version]] = []
+    for t in tags:
+        m = TAG_SEMVER_RE.fullmatch(t)
+        if not m:
+            continue
+        major, minor, micro, dev = m.groups()
+        if dev is None:
+            v = Version(f"{int(major)}.{int(minor)}.{int(micro)}")
+        else:
+            v = Version(f"{int(major)}.{int(minor)}.{int(micro)}.dev{int(dev)}")
+        result.append((t, v))
+    return result
+
+def latest_version_on_main(base_ref: str = "main") -> Version:
+    """
+    Determine the latest version (final or dev) reachable from origin/<base_ref>.
+    If none exist, return 0.0.0.
+    """
+    # Ensure we have the base branch
+    git("fetch", "origin", base_ref)
+    merged_ref = f"origin/{base_ref}"
+    tv = list_semver_tags(merged_ref=merged_ref)
+    if not tv:
+        return Version("0.0.0")
+    # Choose the max by Version ordering (PEP 440: dev < final)
+    return max((v for _, v in tv), default=Version("0.0.0"))
+
+def has_final_tag_for_base(base: Version) -> bool:
+    out = git("tag", "--list", f"v{base.major}.{base.minor}.{base.micro}")
+    if out.returncode != 0:
+        return False
+    return any(t.strip() == f"v{base.major}.{base.minor}.{base.micro}" for t in out.stdout.splitlines())
+
+def has_dev_tag_for_base(base: Version) -> bool:
+    out = git("tag", "--list", f"v{base.major}.{base.minor}.{base.micro}.dev*")
+    if out.returncode != 0:
+        return False
+    return any(
+        re.fullmatch(rf"v{base.major}\.{base.minor}\.{base.micro}\.dev\d+", t.strip())
+        for t in out.stdout.splitlines()
+    )
+
+def next_dev_number_for_base(base: Version, main_v: Version) -> int:
+    """
+    Next devN for base X.Y.Z by scanning tags vX.Y.Z.dev* and considering main_v if it is already a dev on the same base.
+    """
+    start = -1
+    if main_v.is_prerelease and main_v.dev is not None:
+        main_base = Version(f"{main_v.major}.{main_v.minor}.{main_v.micro}")
+        if main_base == base:
+            start = max(start, int(main_v.dev))
+    out = git("tag", "--list", f"v{base.major}.{base.minor}.{base.micro}.dev*")
+    if out.returncode == 0:
+        for line in out.stdout.splitlines():
+            line = line.strip()
+            m = re.fullmatch(rf"v{base.major}\.{base.minor}\.{base.micro}\.dev(\d+)", line)
+            if m:
+                start = max(start, int(m.group(1)))
+    return start + 1
 
 def is_exact_one_step_base(base: Version, main_v: Version) -> bool:
     """
@@ -64,7 +135,8 @@ def is_exact_one_step_base(base: Version, main_v: Version) -> bool:
       - minor: main.major.(main.minor+1).0
       - patch: main.major.main.minor.(main.micro+1)
     """
-    if base <= Version(f"{main_v.major}.{main_v.minor}.{main_v.micro}"):
+    main_base = Version(f"{main_v.major}.{main_v.minor}.{main_v.micro}")
+    if base <= main_base:
         return False
     major_next = Version(f"{main_v.major + 1}.0.0")
     minor_next = Version(f"{main_v.major}.{main_v.minor + 1}.0")
@@ -72,6 +144,7 @@ def is_exact_one_step_base(base: Version, main_v: Version) -> bool:
     return base in {major_next, minor_next, patch_next}
 
 def find_package_inits(src_dir: Path):
+    # collect src/*/__init__.py
     return sorted((p / "__init__.py") for p in src_dir.glob("*") if (p / "__init__.py").exists())
 
 def detect_ci_context() -> tuple[bool, bool]:
@@ -85,34 +158,6 @@ def detect_ci_context() -> tuple[bool, bool]:
     is_push_main = (event == "push") and (ref == "refs/heads/main" or ref_name == "main")
     return is_pr, is_push_main
 
-def has_final_tag_for_base(base: Version) -> bool:
-    """Does an exact final tag vX.Y.Z exist? (not a dev tag)"""
-    out = git("tag", "--list", f"v{base.major}.{base.minor}.{base.micro}")
-    if out.returncode != 0:
-        return False
-    return any(t.strip() == f"v{base.major}.{base.minor}.{base.micro}" for t in out.stdout.splitlines())
-
-def next_dev_number_for_base(base: Version, main_v: Version) -> int:
-    """
-    Determine the next devN for the given base (X.Y.Z) by scanning git tags: vX.Y.Z.devN.
-    If main itself is a dev prerelease on the same base, start from main.dev + 1.
-    Otherwise, from the highest existing tag devN + 1, defaulting to 0.
-    """
-    start = -1
-    if main_v.is_prerelease and main_v.dev is not None:
-        main_base = Version(f"{main_v.major}.{main_v.minor}.{main_v.micro}")
-        if main_base == base:
-            start = max(start, int(main_v.dev))
-
-    out = git("tag", "--list", f"v{base.major}.{base.minor}.{base.micro}.dev*")
-    if out.returncode == 0:
-        for line in out.stdout.splitlines():
-            line = line.strip()
-            m = re.match(rf"^v{base.major}\.{base.minor}\.{base.micro}\.dev(\d+)$", line)
-            if m:
-                start = max(start, int(m.group(1)))
-    return start + 1
-
 def write_github_output(tag: str):
     gh_output = os.environ.get("GITHUB_OUTPUT")
     if gh_output:
@@ -125,10 +170,7 @@ def write_github_output(tag: str):
 
 def main():
     base_ref = os.environ.get("GITHUB_BASE_REF") or "main"
-    main_ref = f"origin/{base_ref}"
-
-    # Ensure we have the base branch
-    subprocess.run(["git", "fetch", "origin", base_ref], check=True)
+    main_v = latest_version_on_main(base_ref)  # <-- derive from tags, not files
 
     package_inits = find_package_inits(SRC)
     if not package_inits:
@@ -149,39 +191,34 @@ def main():
             failures.append(f"[{pkg}] PR version read failed: {e}")
             continue
 
-        try:
-            main_v = read_main_version(init_file, main_ref)
-        except FileNotFoundError:
-            # New package: pretend main base is 0.0.0, so 0.0.1 is a valid first step.
-            main_v = Version("0.0.0")
-        except Exception as e:
-            failures.append(f"[{pkg}] main version read failed: {e}")
-            continue
-
         proposed_base = Version(f"{pr_v.major}.{pr_v.minor}.{pr_v.micro}")
         main_base = Version(f"{main_v.major}.{main_v.minor}.{main_v.micro}")
 
         if is_pr:
-            # --- PR behavior ---
+            # PR rules vs tag-derived main_v
             if main_v.is_prerelease and main_v.dev is not None:
                 ok = (proposed_base == main_base)
             elif proposed_base == main_base:
-                # Bootstrap / starting case (or pre-release work before first final tag):
-                # allow equal base if there's no final tag for this base yet.
+                # allow equal-base only if no final tag exists yet for this base
                 ok = not has_final_tag_for_base(main_base)
             else:
                 ok = is_exact_one_step_base(proposed_base, main_v)
             base_ok = proposed_base if ok else None
         else:
-            # --- Merge to main ---
+            # Merge-to-main rules vs tag-derived main_v
             if pr_v.is_prerelease and pr_v.dev is not None:
                 ok = False
                 base_ok = None
             else:
-                # Either finish dev cycle (main was dev on same base) or one-step bump
+                bootstrap_finish = (
+                    proposed_base == main_base
+                    and has_dev_tag_for_base(proposed_base)
+                    and not has_final_tag_for_base(proposed_base)
+                )
                 ok = (
                     (main_v.is_prerelease and main_v.dev is not None and proposed_base == main_base)
                     or is_exact_one_step_base(proposed_base, main_v)
+                    or bootstrap_finish
                 )
                 base_ok = proposed_base if ok else None
 
@@ -190,20 +227,18 @@ def main():
             proposed_bases.add(base_ok)
         else:
             if is_pr:
-                msg = (
-                    f"[{pkg}] Invalid version proposal relative to main={main_v}: found {pr_v}. "
-                    f"On PRs, allow: (a) same base as main if no final tag exists for that base, "
-                    f"(b) same base if main is already a dev of that base, or "
-                    f"(c) a one-step bump (major/minor/patch)."
+                failures.append(
+                    f"[{pkg}] Invalid version relative to latest tag on main={main_v}: found {pr_v}. "
+                    f"PRs may: (a) match main’s base if no final tag exists yet, "
+                    f"(b) match main’s base if main has a dev on that base, or "
+                    f"(c) bump exactly one step (major/minor/patch)."
                 )
             else:
-                msg = (
-                    f"[{pkg}] Invalid release version on merge: main={main_v}, found {pr_v}. "
-                    f"Expected a plain release that is one-step from main, or finishing a dev cycle."
+                failures.append(
+                    f"[{pkg}] Invalid release version on merge: main(tag)={main_v}, found {pr_v}. "
+                    f"Expected a plain release one-step from main, or finishing a dev cycle."
                 )
-            failures.append(msg)
 
-    # All packages must agree on a single base version
     if proposed_bases:
         if len(proposed_bases) > 1:
             failures.append(
@@ -211,32 +246,30 @@ def main():
                 + ", ".join(sorted(str(b) for b in proposed_bases))
             )
     else:
-        # No valid proposals collected
         pass
 
     if failures:
         print("Version check failed:\n" + "\n".join(failures), file=sys.stderr)
         print("\nObserved versions:", file=sys.stderr)
-        for pkg, main_v, pr_v, ok, base in rows:
-            print(f"  - {pkg}: main={main_v} pr={pr_v} base={base} ok={ok}", file=sys.stderr)
+        for pkg, main_v_s, pr_v_s, ok, base in rows:
+            print(f"  - {pkg}: main(tag)={main_v_s} pr={pr_v_s} base={base} ok={ok}", file=sys.stderr)
         sys.exit(1)
 
-    # Single agreed base
+    # Agreed base
     base = next(iter(proposed_bases))
 
-    # Decide tag based on context
+    # Decide tag
     if is_pr:
-        any_main_v = Version(rows[0][1])
-        devn = next_dev_number_for_base(base, any_main_v)
+        devn = next_dev_number_for_base(base, main_v)
         tag = f"v{base.major}.{base.minor}.{base.micro}.dev{devn}"
     else:
         tag = f"v{base.major}.{base.minor}.{base.micro}"
 
     write_github_output(tag)
 
-    print("SemVer check passed for packages:")
-    for pkg, main_v, pr_v, ok, base_str in rows:
-        print(f"  - {pkg}: main={main_v} -> pr={pr_v} (base {base_str})")
+    print("SemVer check passed for packages (using tags on main):")
+    for pkg, main_v_s, pr_v_s, ok, base_str in rows:
+        print(f"  - {pkg}: main(tag)={main_v_s} -> pr={pr_v_s} (base {base_str})")
     print(f"Tag: {tag}")
 
 if __name__ == "__main__":
