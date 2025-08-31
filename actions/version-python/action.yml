@@ -1,0 +1,38 @@
+name: "Python Package SemVer Check"
+description: "Checks that PR package versions in src/*/__init__.py are semantically bumped relative to main"
+inputs:
+  base_ref:
+    description: "The base branch to compare against (default: main)"
+    required: false
+    default: "main"
+runs:
+  using: "composite"
+  steps:
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install packaging
+
+    - name: Run semver check
+      id: semver
+      shell: bash
+      run: |
+        python $GITHUB_ACTION_PATH/check_semver.py
+      env:
+        GITHUB_BASE_REF: ${{ inputs.base_ref }}
+        GITHUB_HEAD_REF: ${{ github.head_ref }}
+
+    - name: Print tag
+      shell: bash
+      run: echo "Computed tag is ${{ steps.semver.outputs.tag }}"
+outputs:
+  tag:
+    description: "The computed semver tag (e.g. v1.2.3 or v1.2.3.dev0)"
+    value: ${{ steps.semver.outputs.tag }}

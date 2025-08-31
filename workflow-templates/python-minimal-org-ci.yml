@@ -1,0 +1,62 @@
+name: STM32 Project CI/CD
+
+# Global anchors (YAML-level, not GH env for `uses:`)
+env:
+  SUBMODULE_DIR: &SUBMODULE_DIR workflow-templates
+  VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version-python
+  FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/clang-format-check
+  TAG_ACTION: &TAG_ACTION ./workflow-templates/actions/tag
+
+on:
+  pull_request:
+    branches: [ $default-branch ]
+  push:
+    branches: [ $default-branch ]
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - uses: *VERSION_ACTION
+        id: semver
+        with:
+          base_ref: ${{ github.event.repository.default_branch }}
+      - run: echo "Final tag is ${{ steps.semver.outputs.tag }}"
+
+  formatting:
+    name: Formatting Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Ruff
+        uses: astral-sh/ruff-action@v3
+        with:
+          src: "./src"
+
+  tag:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: [version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+
+      - name: Create tag from computed version
+        uses: *TAG_ACTION
+        with:
+          tag: ${{ needs.version.outputs.tag }}
+  

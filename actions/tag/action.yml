@@ -1,0 +1,93 @@
+name: "Create Git Tag"
+description: "Create and push an annotated tag if it doesn't already exist"
+author: "Your Org"
+inputs:
+  tag:
+    description: "Tag name to create (e.g. v1.2.3)"
+    required: true
+  message:
+    description: "Tag message (annotation). Defaults to 'Release <tag>'"
+    required: false
+    default: ""
+  target:
+    description: "Commit SHA or ref to tag (defaults to the current HEAD)"
+    required: false
+    default: ""
+  checkout:
+    description: "Whether to checkout the repo (uses actions/checkout@v4). Set false if already checked out."
+    required: false
+    default: "true"
+  user_name:
+    description: "Git user.name for tagging"
+    required: false
+    default: "GitHub Action"
+  user_email:
+    description: "Git user.email for tagging"
+    required: false
+    default: "action@github.com"
+runs:
+  using: "composite"
+  steps:
+
+    - name: Ensure full history & tags available
+      shell: bash
+      run: |
+        set -euo pipefail
+        # When the caller checked out with shallow history, ensure tags are available
+        git fetch --tags --force || true
+
+    - name: Compute effective values
+      id: eff
+      shell: bash
+      run: |
+        set -euo pipefail
+        TAG="${{ inputs.tag }}"
+        if [ -z "$TAG" ]; then
+          echo "Tag input is required" >&2
+          exit 1
+        fi
+        MSG="${{ inputs.message }}"
+        if [ -z "$MSG" ]; then
+          MSG="Release ${TAG}"
+        fi
+        TARGET="${{ inputs.target }}"
+        if [ -z "$TARGET" ]; then
+          TARGET="$(git rev-parse HEAD)"
+        fi
+
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "message=$MSG" >> "$GITHUB_OUTPUT"
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+    - name: Skip if tag exists on origin
+      id: exists
+      shell: bash
+      run: |
+        set -euo pipefail
+        if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.eff.outputs.tag }}" >/dev/null 2>&1; then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "Tag ${{ steps.eff.outputs.tag }} already exists on origin; skipping creation."
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create and push tag
+      if: steps.exists.outputs.exists == 'false'
+      shell: bash
+      run: |
+        set -euo pipefail
+        git config --local user.name  "${{ inputs.user_name }}"
+        git config --local user.email "${{ inputs.user_email }}"
+
+        git tag -a "${{ steps.eff.outputs.tag }}" "${{ steps.eff.outputs.target }}" -m "${{ steps.eff.outputs.message }}"
+        git push origin "refs/tags/${{ steps.eff.outputs.tag }}"
+outputs:
+  created:
+    description: "Whether a new tag was created and pushed"
+    value: ${{ steps.exists.outputs.exists == 'false' }}
+  tag:
+    description: "The tag name"
+    value: ${{ steps.eff.outputs.tag }}
+  target:
+    description: "The commit the tag points to"
+    value: ${{ steps.eff.outputs.target }}
