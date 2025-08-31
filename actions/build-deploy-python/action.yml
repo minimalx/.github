@@ -1,9 +1,12 @@
 name: "Build Python wheel with Hatch"
-description: "Builds a Python wheel with Hatch using a provided version tag and uploads the artifact."
+description: "Overwrites package version in __init__.py with provided tag (stripped of leading v), builds a wheel with Hatch, and uploads the artifact."
 
 inputs:
   tag:
     description: "Version tag to use (e.g. v1.0.0.dev5)"
+    required: true
+  package:
+    description: "Package name inside src/ (e.g. my_package)"
     required: true
 
 runs:
@@ -21,8 +24,23 @@ runs:
       run: |
         TAG="${{ inputs.tag }}"
         # Strip leading "v" for PEP 440 compliance
-        echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
-        echo "Building version: ${TAG#v}"
+        VERSION="${TAG#v}"
+        echo "PKG_VERSION=$VERSION" >> "$GITHUB_ENV"
+        echo "Building version: $VERSION"
+
+    - name: Overwrite __init__.py version
+      shell: bash
+      run: |
+        INIT_FILE="src/${{ inputs.package }}/__init__.py"
+        if [[ ! -f "$INIT_FILE" ]]; then
+          echo "Error: $INIT_FILE does not exist!"
+          exit 1
+        fi
+        # Remove existing __version__ line(s) and append new one
+        grep -v '^__version__' "$INIT_FILE" > "$INIT_FILE.tmp" || true
+        echo "__version__ = \"${PKG_VERSION}\"" >> "$INIT_FILE.tmp"
+        mv "$INIT_FILE.tmp" "$INIT_FILE"
+        echo "Updated $INIT_FILE with version ${PKG_VERSION}"
 
     - name: Install build dependencies
       shell: bash
