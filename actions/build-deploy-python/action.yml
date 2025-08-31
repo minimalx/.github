@@ -15,6 +15,12 @@ runs:
       with:
         python-version: "3.12"
         cache: "pip"
+        
+    - name: Export package version from computed tag
+      run: |
+        TAG='${{ inputs.tag }}'
+        # Strip leading "v" for PEP 440 compliance, e.g. v1.2.3.dev5 -> 1.2.3.dev5
+        echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
     - name: Install build dependencies
       shell: bash
@@ -22,14 +28,6 @@ runs:
         python -m pip install --upgrade pip
         pip install hatch
         pip install -e .[prod]
-
-    - name: Export package version from computed tag
-      shell: bash
-      run: |
-        TAG="${{ inputs.tag }}"
-        # Strip leading "v" for PEP 440 compliance
-        echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
-        echo "Building version: ${TAG#v}"
 
     - name: Build wheel with Hatch
       shell: bash
