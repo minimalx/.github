@@ -6,6 +6,7 @@ env:
   VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version-python
   FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/clang-format-check
   TAG_ACTION: &TAG_ACTION ./workflow-templates/actions/tag
+  BUILD_DEPLOY_PYTHON_ACTION: &BUILD_DEPLOY_PYTHON_ACTION ./workflow-templates/actions/build-deploy-python
 
 on:
   pull_request:
@@ -16,16 +17,17 @@ on:
 jobs:
   version:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.semver.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
-          token: ${{ secrets.ACTIONS_BOT_PAT }}
-          persist-credentials: false
 
-      - uses: *VERSION_ACTION
+      - name: Compute version
+        uses: *VERSION_ACTION
         id: semver
         with:
           base_ref: ${{ github.event.repository.default_branch }}
@@ -35,14 +37,17 @@ jobs:
     name: Formatting Check
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Run Ruff
         uses: astral-sh/ruff-action@v3
         with:
-          src: "./src"
+          src: "src/"
 
   tag:
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    needs: [version]
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -60,3 +65,35 @@ jobs:
         with:
           tag: ${{ needs.version.outputs.tag }}
   
+  test:
+    needs: [formatting, version]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Export package version from computed tag
+        run: |
+          TAG='${{ needs.version.outputs.tag }}'
+          # Strip leading "v" for PEP 440 compliance, e.g. v1.2.3.dev5 -> 1.2.3.dev5
+          echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest
+          pip install -e .[dev]
+
+      - name: Run tests with pytest
+        run: pytest tests
+        
+  build-and-deploy:
+    needs: [test, version]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build and upload wheel
+        uses: *BUILD_DEPLOY_PYTHON_ACTION
+        with:
+          tag: ${{ needs.version.outputs.tag }}
