@@ -15,12 +15,14 @@ runs:
       with:
         python-version: "3.12"
         cache: "pip"
-        
+
     - name: Export package version from computed tag
+      shell: bash
       run: |
-        TAG='${{ inputs.tag }}'
-        # Strip leading "v" for PEP 440 compliance, e.g. v1.2.3.dev5 -> 1.2.3.dev5
+        TAG="${{ inputs.tag }}"
+        # Strip leading "v" for PEP 440 compliance
         echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+        echo "Building version: ${TAG#v}"
 
     - name: Install build dependencies
       shell: bash
