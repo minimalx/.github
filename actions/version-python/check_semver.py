@@ -7,7 +7,6 @@ from pathlib import Path
 from packaging.version import Version, InvalidVersion
 from packaging.utils import canonicalize_name
 import json
-from packaging.utils import canonicalize_name
 
 try:
     import tomllib  # py3.11+
