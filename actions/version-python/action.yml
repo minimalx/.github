@@ -108,7 +108,7 @@ runs:
         AWS_PROD_DOMAIN_OWNER: ${{ inputs.domain-owner-prod }}
         AWS_PYTHON_REPO_PROD: ${{ inputs.repo-prod }}
       run: |
-        python "$GITHUB_ACTION_PATH/check_semver.py"
+        python -u "$GITHUB_ACTION_PATH/check_semver.py"
 
     - name: Print tag
       shell: bash

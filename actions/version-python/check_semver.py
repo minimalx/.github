@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from packaging.version import Version, InvalidVersion
+from packaging.utils import canonicalize_name
 
 # ------------------------
 # Utilities
