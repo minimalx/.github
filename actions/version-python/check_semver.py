@@ -10,6 +10,86 @@ from packaging.version import Version, InvalidVersion
 # Utilities
 # ------------------------
 
+import json
+
+def aws(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["aws", *args], capture_output=True, text=True)
+
+def list_dev_versions_from_codeartifact(
+    domain: str, domain_owner: str, repository: str, package: str, region: str,
+    base: Version
+) -> list[Version]:
+    """
+    Returns all published v{base}.devN versions for the given package from CodeArtifact.
+    Requires AWS credentials in env (role assumed in the job).
+    """
+    versions: list[Version] = []
+    next_token = None
+    while True:
+        cmd = [
+            "codeartifact", "list-package-versions",
+            "--domain", domain,
+            "--domain-owner", domain_owner,
+            "--repository", repository,
+            "--format", "pypi",
+            "--package", package,
+            "--status", "Published",
+            "--region", region,
+        ]
+        if next_token:
+            cmd += ["--next-token", next_token]
+        out = aws(*cmd)
+        if out.returncode != 0:
+            # surface error for caller to decide on fallback
+            raise RuntimeError(f"CodeArtifact list-package-versions failed: {out.stderr.strip()}")
+        data = json.loads(out.stdout or "{}")
+        for item in data.get("versions", []):
+            ver = item.get("version")
+            if not ver:
+                continue
+            # Match base.devN exactly (PEP 440 ok)
+            m = re.fullmatch(rf"{base.major}\.{base.minor}\.{base.micro}\.dev(\d+)", ver)
+            if m:
+                try:
+                    versions.append(Version(ver))
+                except InvalidVersion:
+                    pass
+        next_token = data.get("nextToken")
+        if not next_token:
+            break
+    return versions
+
+def next_dev_number_from_codeartifact(
+    base: Version, package: str
+) -> int | None:
+    """
+    Compute next devN by querying CodeArtifact DEV repo using env:
+      AWS_REGION_CODEARTIFACT / AWS_DOMAIN / AWS_DEV_DOMAIN_OWNER / AWS_PYTHON_REPO_DEV
+    Returns None if it can't query (no creds, CLI missing, or error).
+    """
+    domain = os.environ.get("AWS_DOMAIN")
+    domain_owner = os.environ.get("AWS_DEV_DOMAIN_OWNER") or os.environ.get("AWS_DOMAIN_OWNER")
+    repository = os.environ.get("AWS_PYTHON_REPO_DEV") or os.environ.get("REPO_DEV")
+    region = os.environ.get("AWS_REGION_CODEARTIFACT") or os.environ.get("AWS_REGION")
+    if not all([domain, domain_owner, repository, region]):
+        return None
+    try:
+        versions = list_dev_versions_from_codeartifact(
+            domain=domain,
+            domain_owner=domain_owner,
+            repository=repository,
+            package=package,
+            region=region,
+            base=base,
+        )
+    except Exception:
+        return None
+    if not versions:
+        return 0
+    # pick max devN and add 1
+    max_dev = max(v.dev for v in versions if v.is_prerelease and v.dev is not None)
+    return int(max_dev) + 1 if max_dev is not None else 0
+
 def resolve_repo_root() -> Path:
     ws = os.environ.get("GITHUB_WORKSPACE")
     if ws:
@@ -258,9 +338,14 @@ def main():
     # Agreed base
     base = next(iter(proposed_bases))
 
-    # Decide tag
     if is_pr:
-        devn = next_dev_number_for_base(base, main_v)
+        # Prefer CodeArtifact (DEV) so we never collide with an already-published immutable version
+        # Choose a representative package name (assumes single package; if multi, you can pick the first)
+        primary_pkg = package_inits[0].parent.name
+        devn = next_dev_number_from_codeartifact(base, primary_pkg)
+        if devn is None:
+            # Fallback to existing git-tag scan if CA is unavailable
+            devn = next_dev_number_for_base(base, main_v)
         tag = f"v{base.major}.{base.minor}.{base.micro}.dev{devn}"
     else:
         tag = f"v{base.major}.{base.minor}.{base.micro}"

@@ -1,18 +1,68 @@
 name: "Python Package SemVer Check"
-description: "Checks that PR package versions in src/*/__init__.py are semantically bumped relative to main"
+description: "Checks that PR package versions in src/*/__init__.py are semantically bumped relative to main, and (optionally) computes next devN from CodeArtifact."
+
+# The calling workflow should grant:
+# permissions:
+#   id-token: write
+#   contents: read
+
 inputs:
   base_ref:
-    description: "The base branch to compare against (default: main)"
+    description: "The base branch to compare against"
     required: false
     default: "main"
+
+  # --- Toggle CodeArtifact lookup (DEV) ---
+  use-codeartifact:
+    description: "If 'true', assume AWS role on PRs and query DEV CodeArtifact to pick next devN"
+    required: false
+    default: "true"
+
+  # --- AWS / CodeArtifact (DEV) ---
+  aws-region:
+    description: "AWS region for CodeArtifact (e.g., eu-west-1)"
+    required: false
+  domain:
+    description: "AWS CodeArtifact domain"
+    required: false
+  domain-owner-dev:
+    description: "AWS account ID (DEV) that owns the CodeArtifact domain"
+    required: false
+  repo-dev:
+    description: "CodeArtifact repository for DEV publishes (used to list versions)"
+    required: false
+  role-dev:
+    description: "IAM role ARN to assume for DEV (must allow codeartifact:ListPackageVersions)"
+    required: false
+
+  # --- Optional: enable PROD existence check on pushes to main (off by default) ---
+  use-codeartifact-prod:
+    description: "If 'true', also assume PROD role on push to main to check PROD repo (optional)"
+    required: false
+    default: "false"
+  domain-owner-prod:
+    description: "AWS account ID (PROD) that owns the CodeArtifact domain"
+    required: false
+  repo-prod:
+    description: "CodeArtifact repository for PROD (optional existence check)"
+    required: false
+  role-prod:
+    description: "IAM role ARN to assume for PROD (optional)"
+    required: false
+
+  # Python
+  python-version:
+    description: "Python version for the check"
+    required: false
+    default: "3.12"
+
 runs:
   using: "composite"
   steps:
-
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        python-version: ${{ inputs.python-version }}
 
     - name: Install dependencies
       shell: bash
@@ -20,19 +70,51 @@ runs:
         python -m pip install --upgrade pip
         pip install packaging
 
+    # ====== AWS Login (DEV) for PRs ======
+    - name: Configure AWS (DEV) for CodeArtifact lookup
+      if: ${{ inputs.use-codeartifact == 'true' && github.event_name == 'pull_request' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-dev }}
+        aws-region: ${{ inputs.aws-region }}
+
+    # ====== AWS Login (PROD) for pushes to main (optional) ======
+    - name: Configure AWS (PROD) for CodeArtifact lookup
+      if: ${{ inputs.use-codeartifact-prod == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-prod }}
+        aws-region: ${{ inputs.aws-region }}
+
     - name: Run semver check
       id: semver
       shell: bash
-      run: |
-        python $GITHUB_ACTION_PATH/check_semver.py
       env:
+        # CI context
         GITHUB_BASE_REF: ${{ inputs.base_ref }}
         GITHUB_HEAD_REF: ${{ github.head_ref }}
+
+        # Enable CA-backed devN resolution in your script
+        USE_CODEARTIFACT: ${{ inputs.use-codeartifact }}
+
+        # DEV repo settings (used on PRs)
+        AWS_REGION_CODEARTIFACT: ${{ inputs.aws-region }}
+        AWS_DOMAIN: ${{ inputs.domain }}
+        AWS_DEV_DOMAIN_OWNER: ${{ inputs.domain-owner-dev }}
+        AWS_PYTHON_REPO_DEV: ${{ inputs.repo-dev }}
+
+        # Optional PROD repo settings (if you extend the script to check PROD too)
+        USE_CODEARTIFACT_PROD: ${{ inputs.use-codeartifact-prod }}
+        AWS_PROD_DOMAIN_OWNER: ${{ inputs.domain-owner-prod }}
+        AWS_PYTHON_REPO_PROD: ${{ inputs.repo-prod }}
+      run: |
+        python "$GITHUB_ACTION_PATH/check_semver.py"
 
     - name: Print tag
       shell: bash
       run: echo "Computed tag is ${{ steps.semver.outputs.tag }}"
+
 outputs:
   tag:
-    description: "The computed semver tag (e.g. v1.2.3 or v1.2.3.dev0)"
+    description: "The computed semver tag (e.g. v1.2.3 or v1.2.3.devN)"
     value: ${{ steps.semver.outputs.tag }}
