@@ -6,12 +6,44 @@ import sys
 from pathlib import Path
 from packaging.version import Version, InvalidVersion
 from packaging.utils import canonicalize_name
-
-# ------------------------
-# Utilities
-# ------------------------
-
 import json
+from packaging.utils import canonicalize_name
+
+try:
+    import tomllib  # py3.11+
+except ModuleNotFoundError:
+    tomllib = None
+
+def log(msg: str):
+    print(f"[semver] {msg}", flush=True)
+
+def read_distribution_name_from_pyproject(root: Path) -> str | None:
+    if tomllib is None:
+        return None
+    p = root / "pyproject.toml"
+    if not p.exists():
+        return None
+    with p.open("rb") as fh:
+        data = tomllib.load(fh)
+    proj = data.get("project") or {}
+    name = proj.get("name")
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+def candidate_codeartifact_package_names(root: Path, package_inits: list[Path]) -> list[str]:
+    cands: list[str] = []
+    dist = read_distribution_name_from_pyproject(root)
+    first_pkg = package_inits[0].parent.name if package_inits else None
+    if dist:
+        can = canonicalize_name(dist)  # PEP 503 normalized (lower, dashes)
+        for n in (can, dist):
+            if n and n not in cands:
+                cands.append(n)
+    if first_pkg:
+        dashed = first_pkg.replace("_", "-")
+        for n in (dashed, first_pkg):
+            if n and n not in cands:
+                cands.append(n)
+    return cands
 
 def aws(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["aws", *args], capture_output=True, text=True)
@@ -20,10 +52,6 @@ def list_dev_versions_from_codeartifact(
     domain: str, domain_owner: str, repository: str, package: str, region: str,
     base: Version
 ) -> list[Version]:
-    """
-    Returns all published v{base}.devN versions for the given package from CodeArtifact.
-    Requires AWS credentials in env (role assumed in the job).
-    """
     versions: list[Version] = []
     next_token = None
     while True:
@@ -39,18 +67,17 @@ def list_dev_versions_from_codeartifact(
         ]
         if next_token:
             cmd += ["--next-token", next_token]
+        log(f"CA list: {' '.join(cmd)}")
         out = aws(*cmd)
         if out.returncode != 0:
-            # surface error for caller to decide on fallback
             raise RuntimeError(f"CodeArtifact list-package-versions failed: {out.stderr.strip()}")
         data = json.loads(out.stdout or "{}")
-        print(data)
+        log(f"CA response page for '{package}': {json.dumps(data, indent=2)}")
         for item in data.get("versions", []):
             ver = item.get("version")
-            print(ver)
+            log(f"CA version candidate: {ver}")
             if not ver:
                 continue
-            # Match base.devN exactly (PEP 440 ok)
             m = re.fullmatch(rf"{base.major}\.{base.minor}\.{base.micro}\.dev(\d+)", ver)
             if m:
                 try:
@@ -62,36 +89,45 @@ def list_dev_versions_from_codeartifact(
             break
     return versions
 
-def next_dev_number_from_codeartifact(
-    base: Version, package: str
-) -> int | None:
-    """
-    Compute next devN by querying CodeArtifact DEV repo using env:
-      AWS_REGION_CODEARTIFACT / AWS_DOMAIN / AWS_DEV_DOMAIN_OWNER / AWS_PYTHON_REPO_DEV
-    Returns None if it can't query (no creds, CLI missing, or error).
-    """
+def next_dev_number_from_codeartifact(base: Version, package_candidates: list[str]) -> int | None:
     domain = os.environ.get("AWS_DOMAIN")
     domain_owner = os.environ.get("AWS_DEV_DOMAIN_OWNER") or os.environ.get("AWS_DOMAIN_OWNER")
     repository = os.environ.get("AWS_PYTHON_REPO_DEV") or os.environ.get("REPO_DEV")
     region = os.environ.get("AWS_REGION_CODEARTIFACT") or os.environ.get("AWS_REGION")
+
     if not all([domain, domain_owner, repository, region]):
+        log("Missing CA env (domain/domain-owner/repo/region) → skip CA lookup")
         return None
-    try:
-        versions = list_dev_versions_from_codeartifact(
-            domain=domain,
-            domain_owner=domain_owner,
-            repository=repository,
-            package=package,
-            region=region,
-            base=base,
-        )
-    except Exception:
+
+    last_err: Exception | None = None
+    for pkg in package_candidates:
+        try:
+            log(f"Querying CodeArtifact for package '{pkg}' base={base}")
+            versions = list_dev_versions_from_codeartifact(
+                domain=domain,
+                domain_owner=domain_owner,
+                repository=repository,
+                package=pkg,
+                region=region,
+                base=base,
+            )
+            if versions:
+                max_dev = max(v.dev for v in versions if v.is_prerelease and v.dev is not None)
+                next_n = (int(max_dev) + 1) if max_dev is not None else 0
+                log(f"Found {len(versions)} matching dev versions for '{pkg}'. Next devN = {next_n}")
+                return next_n
+            else:
+                log(f"No dev versions found for '{pkg}'.")
+        except Exception as e:
+            last_err = e
+            log(f"CA lookup failed for '{pkg}': {e}")
+
+    if last_err:
+        log(f"All CA lookups failed; falling back to git. Last error: {last_err}")
         return None
-    if not versions:
-        return 0
-    # pick max devN and add 1
-    max_dev = max(v.dev for v in versions if v.is_prerelease and v.dev is not None)
-    return int(max_dev) + 1 if max_dev is not None else 0
+    log("CA returned no versions for any candidate; default devN=0")
+    return 0
+
 
 def resolve_repo_root() -> Path:
     ws = os.environ.get("GITHUB_WORKSPACE")
@@ -342,16 +378,17 @@ def main():
     base = next(iter(proposed_bases))
 
     if is_pr:
-        # Prefer CodeArtifact (DEV) so we never collide with an already-published immutable version
-        # Choose a representative package name (assumes single package; if multi, you can pick the first)
-        primary_pkg = package_inits[0].parent.name
-        devn = next_dev_number_from_codeartifact(base, primary_pkg)
+        candidates = candidate_codeartifact_package_names(ROOT, package_inits)
+        log(f"Package name candidates for CodeArtifact: {candidates}")
+        devn = next_dev_number_from_codeartifact(base, candidates)
         if devn is None:
-            # Fallback to existing git-tag scan if CA is unavailable
+            # CA not available → fall back to git tags
             devn = next_dev_number_for_base(base, main_v)
+            log(f"Fell back to git tags. Next devN (git) = {devn}")
         tag = f"v{base.major}.{base.minor}.{base.micro}.dev{devn}"
     else:
         tag = f"v{base.major}.{base.minor}.{base.micro}"
+
 
     write_github_output(tag)
 
