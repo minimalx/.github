@@ -43,8 +43,10 @@ def list_dev_versions_from_codeartifact(
             # surface error for caller to decide on fallback
             raise RuntimeError(f"CodeArtifact list-package-versions failed: {out.stderr.strip()}")
         data = json.loads(out.stdout or "{}")
+        print(data)
         for item in data.get("versions", []):
             ver = item.get("version")
+            print(ver)
             if not ver:
                 continue
             # Match base.devN exactly (PEP 440 ok)
