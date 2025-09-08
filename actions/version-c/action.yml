@@ -36,7 +36,7 @@ runs:
         minor_pattern: "(${{ inputs.bump-pattern-prefix }}MINOR)"
         enable_prerelease_mode: ${{ github.event_name == 'pull_request' }}
         version_format: ${{ github.ref == 'refs/heads/main' && '${major}.${minor}.${patch}' || '${major}.${minor}.${patch}-dev${increment}' }}
-        change_path: ${{ inputs.project-root }}
+        change_path: "${{ inputs.project-root }} global-canbus-definitions"
 
     - name: Export Version to Env
       shell: bash
