@@ -19,29 +19,6 @@ inputs:
     description: "Top-level package directory under src/ (e.g., minimal_can_utils)."
     required: true
 
-  # --- AWS/CodeArtifact config ---
-  aws-region:
-    description: "AWS region for CodeArtifact (e.g., eu-west-1)."
-    required: true
-  domain:
-    description: "AWS CodeArtifact domain."
-    required: true
-  domain-owner:
-    description: "AWS account ID that owns the CodeArtifact domain."
-    required: true
-  repo-dev:
-    description: "CodeArtifact repository for DEV publishes (used on pull_request)."
-    required: true
-  repo-prod:
-    description: "CodeArtifact repository for PROD publishes (used on push to main)."
-    required: true
-  role-dev:
-    description: "IAM role ARN to assume for DEV publishes."
-    required: true
-  role-prod:
-    description: "IAM role ARN to assume for PROD publishes."
-    required: true
-
   # --- Build options (optional) ---
   python-version:
     description: "Python version to use."
@@ -132,52 +109,47 @@ runs:
 
     # ================= DEV (pull_request) =================
     - name: Configure AWS credentials (DEV)
-      if: ${{ inputs.publish == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ env.PUBLISH == 'true' && github.event_name == 'pull_request' }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ inputs.role-dev }}
-        aws-region: ${{ inputs.aws-region }}
-        role-duration-seconds: 1800 
+        role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
+        aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
+        role-duration-seconds: 1800  # 30m
 
     - name: Login Twine to CodeArtifact (DEV)
-      if: ${{ inputs.publish == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ env.PUBLISH == 'true' && github.event_name == 'pull_request' }}
       shell: bash
       run: |
         aws codeartifact login \
           --tool twine \
-          --domain "${{ inputs.domain }}" \
-          --domain-owner "${{ inputs['domain-owner'] }}" \
-          --repository "${{ inputs['repo-dev'] }}" \
-          --region "${{ inputs['aws-region'] }}" \
+          --domain       "${{ env.AWS_DOMAIN }}" \
+          --domain-owner "${{ env.AWS_DEV_DOMAIN_OWNER }}" \
+          --repository   "${{ env.AWS_PYTHON_REPO_DEV }}" \
+          --region       "${{ env.AWS_REGION_CODEARTIFACT }}" \
           --duration-seconds 1800
-
-    - name: Upload to DEV repository
-      if: ${{ inputs.publish == 'true' && github.event_name == 'pull_request' }}
-      shell: bash
-      run: |
-        twine upload --repository codeartifact dist/*
 
     # ================= PROD (push to main) =================
     - name: Configure AWS credentials (PROD)
-      if: ${{ inputs.publish == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      if: ${{ env.PUBLISH == 'true' && github.event_name == 'pull_request' }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ inputs.role-prod }}
-        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER}}
+        aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
+        role-duration-seconds: 600  # 30m
 
-    - name: Login Twine to CodeArtifact (PROD)
-      if: ${{ inputs.publish == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - name: Login Twine to CodeArtifact (DEV)
+      if: ${{ env.PUBLISH == 'true' && github.event_name == 'pull_request' }}
       shell: bash
       run: |
         aws codeartifact login \
           --tool twine \
-          --domain "${{ inputs.domain }}" \
-          --domain-owner "${{ inputs['domain-owner'] }}" \
-          --repository "${{ inputs['repo-prod'] }}" \
-          --region "${{ inputs['aws-region'] }}"
+          --domain       "${{ env.AWS_DOMAIN }}" \
+          --domain-owner "${{ env.AWS_DEV_DOMAIN_OWNER }}" \
+          --repository   "${{ env.AWS_PYTHON_REPO_PROD }}" \
+          --region       "${{ env.AWS_REGION_CODEARTIFACT }}" \
+          --duration-seconds 600
 
-    - name: Upload to PROD repository
-      if: ${{ inputs.publish == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - name: Upload to repository
       shell: bash
       run: |
         twine upload --repository codeartifact dist/*
