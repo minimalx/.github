@@ -137,6 +137,7 @@ runs:
       with:
         role-to-assume: ${{ inputs.role-dev }}
         aws-region: ${{ inputs.aws-region }}
+        role-duration-seconds: 1800 
 
     - name: Login Twine to CodeArtifact (DEV)
       if: ${{ inputs.publish == 'true' && github.event_name == 'pull_request' }}
@@ -147,7 +148,8 @@ runs:
           --domain "${{ inputs.domain }}" \
           --domain-owner "${{ inputs['domain-owner'] }}" \
           --repository "${{ inputs['repo-dev'] }}" \
-          --region "${{ inputs['aws-region'] }}"
+          --region "${{ inputs['aws-region'] }}" \
+          --duration-seconds 1800
 
     - name: Upload to DEV repository
       if: ${{ inputs.publish == 'true' && github.event_name == 'pull_request' }}
