@@ -1,0 +1,43 @@
+name: "Generate Secret Keys Header"
+description: "Create secret_keys.h from four hex keys and save to a specified path"
+inputs:
+  default_key_a:
+    description: "Hex for DEFAULT_KEY_A"
+    required: true
+  default_key_b:
+    description: "Hex for DEFAULT_KEY_B"
+    required: true
+  minimal_key_a:
+    description: "Hex for MINIMAL_KEY_A"
+    required: true
+  minimal_key_b:
+    description: "Hex for MINIMAL_KEY_B"
+    required: true
+  output_path:
+    description: "Where to write the header file"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure Python is available
+    # ubuntu-latest has Python preinstalled; this just shows the version.
+      shell: bash
+      run: python3 -V
+
+    - name: Generate header
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/gen_secret_keys_header.py" \
+          "${{ inputs.default_key_a }}" \
+          "${{ inputs.default_key_b }}" \
+          "${{ inputs.minimal_key_a }}" \
+          "${{ inputs.minimal_key_b }}" \
+          -o "${{ inputs.output_path }}"
+
+    - name: Confirm file exists (no secret contents printed)
+      shell: bash
+      run: |
+        test -f "${{ inputs.output_path }}"
+        echo "Wrote header to: ${{ inputs.output_path }}"
