@@ -50,15 +50,21 @@ runs:
           stm32cubeide-builder \
           "${PROJECT_PATH}" "${PROJECT_TARGET}"
 
-    # We don’t assume Debug/Release from project-target; just upload whatever exists.
+    - name: Derive build configuration
+      id: derive-build-config
+      shell: bash
+      run: |
+        project_target="${{ inputs.project-target }}"
+        build_config="${project_target##*/}"
+        echo "build_configuration=$build_config" >> "$GITHUB_OUTPUT"
+        echo "BUILD_CONFIGURATION=$build_config" >> "$GITHUB_ENV"
+
+    # Upload artifacts produced for the derived build configuration.
     - name: Upload firmware artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.fw_art_name }}
         path: |
-          ${{ inputs.project-path }}/Debug/*.elf
-          ${{ inputs.project-path }}/Debug/*.bin
-          ${{ inputs.project-path }}/Debug/*.hex
-          ${{ inputs.project-path }}/Release/*.elf
-          ${{ inputs.project-path }}/Release/*.bin
-          ${{ inputs.project-path }}/Release/*.hex
+          ${{ inputs.project-path }}/${{ steps.derive-build-config.outputs.build_configuration }}/*.elf
+          ${{ inputs.project-path }}/${{ steps.derive-build-config.outputs.build_configuration }}/*.bin
+          ${{ inputs.project-path }}/${{ steps.derive-build-config.outputs.build_configuration }}/*.hex
