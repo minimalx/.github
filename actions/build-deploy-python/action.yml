@@ -114,7 +114,7 @@ runs:
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
-        role-duration-seconds: 1800  # 30m
+        role-duration-seconds: 900  # 30m
 
     - name: Login Twine to CodeArtifact (DEV)
       if: ${{ github.event_name == 'pull_request' }}
@@ -126,7 +126,7 @@ runs:
           --domain-owner "${{ env.AWS_DEV_DOMAIN_OWNER }}" \
           --repository   "${{ env.AWS_PYTHON_REPO_DEV }}" \
           --region       "${{ env.AWS_REGION_CODEARTIFACT }}" \
-          --duration-seconds 1800
+          --duration-seconds 900
 
     # ================= PROD (push to main) =================
     - name: Configure AWS credentials (PROD)
@@ -135,7 +135,7 @@ runs:
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER}}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
-        role-duration-seconds: 600  # 30m
+        role-duration-seconds: 900  # 30m
 
     - name: Login Twine to CodeArtifact (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -147,7 +147,7 @@ runs:
           --domain-owner "${{ env.AWS_DEV_DOMAIN_OWNER }}" \
           --repository   "${{ env.AWS_PYTHON_REPO_PROD }}" \
           --region       "${{ env.AWS_REGION_CODEARTIFACT }}" \
-          --duration-seconds 600
+          --duration-seconds 900
 
     - name: Upload to repository
       shell: bash

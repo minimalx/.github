@@ -52,7 +52,7 @@ runs:
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
-        role-duration-seconds: 600
+        role-duration-seconds: 900
 
     - name: Upload bundle to CodeArtifact (PROD / generic repo)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -76,7 +76,7 @@ runs:
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
-        role-duration-seconds: 600
+        role-duration-seconds: 900
 
     - name: Upload bundle to CodeArtifact (DEV / generic repo)
       if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
