@@ -42,6 +42,12 @@ runs:
           echo "Could not parse version from tag: $RAW" >&2
           exit 1
         fi
+        
+        NAMESPACE="${{ inputs.namespace }}"
+        if [[ -z "${NAMESPACE:-}" ]]; then
+          echo "Namespace is required for CodeArtifact generic format." >&2
+          exit 1
+        fi
 
         PACKAGE="${{ inputs.package-name }}"
         FILENAME="${PACKAGE}-${VERSION}.zip"
