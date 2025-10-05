@@ -6,8 +6,20 @@ env:
   VERSION_ACTION: &VERSION_ACTION ./workflow-templates/actions/version-c
   FORMATTING_ACTION: &FORMATTING_ACTION ./workflow-templates/actions/clang-format-check
   BUILD_ACTION: &BUILD_ACTION ./workflow-templates/actions/build-stm32
-  DEV_BUILD_TARGET: &DEV_BUILD_TARGET <YOUR_DEBUG_BUILD_TARGET>
-  PROD_BUILD_TARGET: &PROD_BUILD_TARGET <YOUR_RELEASE_BUILD_TARGET>
+  RELEASE_ACTION: &RELEASE_ACTION ./workflow-templates/actions/stm32-release
+  DEV_BUILD_TARGET_MAIN: &DEV_BUILD_TARGET_MAIN <FILL THIS IN>
+  PROD_BUILD_TARGET_MAIN: &PROD_BUILD_TARGET_MAIN <FILL THIS IN>
+  DEV_BUILD_TARGET_BL: &DEV_BUILD_TARGET_BL <FILL THIS IN>
+  PROD_BUILD_TARGET_BL: &PROD_BUILD_TARGET_BL <FILL THIS IN>
+  MAIN_PACKAGE_NAME: &MAIN_PACKAGE_NAME <FILL THIS IN>-app
+  BL_PACKAGE_NAME: &BL_PACKAGE_NAME <FILL THIS IN>-bootloader
+  BOARD_NAME: <FILL THIS IN>
+  AWS_REGION_CODEARTIFACT:    ${{ secrets.AWS_REGION_CODEARTIFACT }}
+  AWS_DOMAIN:                 ${{ secrets.AWS_DOMAIN }}
+  AWS_DOMAIN_OWNER:           ${{ secrets.AWS_PROD_DOMAIN_OWNER }}
+  AWS_STM32_REPO_DEV:         ${{ secrets.AWS_STM32_REPO_DEV }}
+  AWS_STM32_REPO_PROD:        ${{ secrets.AWS_STM32_REPO_PROD }}
+  AWS_CODEARTIFACT_PUBLISHER: ${{ secrets.AWS_CODEARTIFACT_PUBLISHER_ROLE }}
 
 on:
   pull_request:
@@ -248,3 +260,57 @@ jobs:
           project-path: bootloader
           project-target: *PROD_BUILD_TARGET_BL
           fw_art_name: Release_${{ needs.version-bl.outputs.version_tag }}
+
+  release-main-prod:
+      name: Release (PROD, main-app)
+      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.version-main.outputs.changed == 'true'
+      needs:
+        - build-prod-main
+        - version-main
+        - tag-main
+      runs-on: ubuntu-latest
+      permissions:
+        id-token: write
+        contents: read
+      steps:
+        - name: Checkout (with submodules)
+          uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+            submodules: recursive
+            token: ${{ secrets.ACTIONS_BOT_PAT }}
+            persist-credentials: false
+        - name: Publish STM32 Firmware (PROD, main-app)
+          uses: *RELEASE_ACTION
+          with:
+            tag: ${{ needs.version-main.outputs.version_tag }}
+            artifact-pattern: Release_${{ needs.version-main.outputs.version_tag }}
+            package-name: *MAIN_PACKAGE_NAME
+            namespace: ${{ env.BOARD_NAME }}
+
+  release-bl-prod:
+    name: Release (PROD, bootloader)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.version-bl.outputs.changed == 'true'
+    needs:
+      - build-prod-bl
+      - version-bl
+      - tag-bl
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # needed for OIDC
+      contents: read    # usually needed to read the repo
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.ACTIONS_BOT_PAT }}
+          persist-credentials: false
+      - name: Publish STM32 Firmware (PROD, bootloader)
+        uses: *RELEASE_ACTION
+        with:
+          tag: ${{ needs.version-bl.outputs.version_tag }}
+          artifact-pattern: Release_${{ needs.version-bl.outputs.version_tag }}
+          package-name: *BL_PACKAGE_NAME
+          namespace: ${{ env.BOARD_NAME }}
