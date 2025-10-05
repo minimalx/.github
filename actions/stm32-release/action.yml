@@ -15,6 +15,9 @@ inputs:
   package-name:
     description: "CodeArtifact package name to publish."
     required: true
+  namespace:
+    description: "CodeArtifact namespace for the generic package (required by generic format, e.g., 'bcu')."
+    required: true
 
 runs:
   using: "composite"
@@ -81,6 +84,7 @@ runs:
           --domain-owner "${{ env.AWS_DOMAIN_OWNER }}" \
           --repository "${{ env.AWS_STM32_REPO_PROD }}" \
           --format generic \
+          --namespace "$NAMESPACE" \
           --package "$PACKAGE" \
           --package-version "$VERSION" \
           --asset-content "$FILENAME" \
@@ -110,6 +114,7 @@ runs:
           --domain-owner "${{ env.AWS_DOMAIN_OWNER }}" \
           --repository "${{ env.AWS_STM32_REPO_DEV }}" \
           --format generic \
+          --namespace "$NAMESPACE" \
           --package "$PACKAGE" \
           --package-version "$VERSION" \
           --asset-content "$FILENAME" \
