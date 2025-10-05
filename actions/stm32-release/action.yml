@@ -97,6 +97,19 @@ runs:
           --asset-content "$FILENAME" \
           --asset-name "$FILENAME" \
           --asset-sha256 "$ASSET_SHA256"
+          
+    - name: Create/Update GitHub Release (PROD)
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.tag }}
+        name: ${{ env.PACKAGE }} ${{ env.VERSION }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        files: ${{ env.FILENAME }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
 
     # ================== DEV path (PRs and non-main pushes) ==================
     - name: Configure AWS credentials (DEV)
