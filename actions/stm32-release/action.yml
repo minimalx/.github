@@ -7,7 +7,7 @@ description: |
 
 inputs:
   tag:
-    description: "Version tag to use (e.g., v1.2.3 or v1.2.3-dev4). Leading 'v' is stripped for versioning."
+    description: "Version tag to use (e.g., BCU_BL_v1.2.3 or v1.2.3-rc1). A clean semver is extracted for publishing."
     required: true
   artifact-pattern:
     description: "Artifact name or glob pattern to download (actions/download-artifact pattern syntax)."
@@ -19,7 +19,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-
     - name: Download firmware artifacts
       uses: actions/download-artifact@v4
       with:
@@ -27,25 +26,37 @@ runs:
         path: release/artifacts
         merge-multiple: true
 
-    # Derive VERSION (strip leading v), PACKAGE and FILENAME for reuse
+    # Derive VERSION (regex), PACKAGE and FILENAME once and export to env
     - name: Derive version and filenames
       shell: bash
       run: |
+        set -euo pipefail
         RAW="${{ inputs.tag }}"
-        VERSION="${RAW#v}"
+        # Extract first semantic version (supports pre-release/build suffixes)
+        VERSION="$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]([0-9A-Za-z.\-+]*)?')" || true
+        if [[ -z "${VERSION:-}" ]]; then
+          echo "Could not parse version from tag: $RAW" >&2
+          exit 1
+        fi
         PACKAGE="${{ inputs.package-name }}"
         FILENAME="${PACKAGE}-${VERSION}.zip"
+
         echo "VERSION=$VERSION"   >> "$GITHUB_ENV"
         echo "PACKAGE=$PACKAGE"   >> "$GITHUB_ENV"
         echo "FILENAME=$FILENAME" >> "$GITHUB_ENV"
 
+        echo "Parsed VERSION=$VERSION, PACKAGE=$PACKAGE, FILENAME=$FILENAME"
+
     - name: Create firmware bundle (.zip)
       shell: bash
       run: |
+        set -euo pipefail
         mkdir -p release
+        # Zip the downloaded artifacts directory into the agreed filename at repo root
         (cd release && zip -r "../$FILENAME" artifacts)
+        ls -l "$FILENAME"
 
-    # ===== PROD path (pushes to main) =====
+    # ====================== PROD path (pushes to main) ======================
     - name: Configure AWS credentials (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       uses: aws-actions/configure-aws-credentials@v4
@@ -58,14 +69,9 @@ runs:
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       shell: bash
       run: |
-        # Re-derive a clean semver (e.g., 0.1.7 or 0.1.7-dev4) from the tag
-        RAW="${{ inputs.tag }}"
-        VERSION="$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]([0-9A-Za-z\.-]*)?')"
-        : "${VERSION:?Could not parse version from tag: $RAW}"
-        PACKAGE="${{ inputs.package-name }}"
-        FILENAME="${PACKAGE}-${VERSION}.zip"
+        set -euo pipefail
+        : "${VERSION:?missing}"; : "${PACKAGE:?missing}"; : "${FILENAME:?missing}"
 
-        # Hash the asset per CodeArtifact generic requirements
         ASSET_SHA256="$(sha256sum "$FILENAME" | awk '{print $1}')"
 
         aws codeartifact publish-package-version \
@@ -79,7 +85,7 @@ runs:
           --asset-name "$FILENAME" \
           --asset-sha256 "$ASSET_SHA256"
 
-    # ===== DEV path (PRs and non-main pushes) =====
+    # ================== DEV path (PRs and non-main pushes) ==================
     - name: Configure AWS credentials (DEV)
       if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
       uses: aws-actions/configure-aws-credentials@v4
@@ -92,11 +98,8 @@ runs:
       if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
       shell: bash
       run: |
-        RAW="${{ inputs.tag }}"
-        VERSION="$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]([0-9A-Za-z\.-]*)?')"
-        : "${VERSION:?Could not parse version from tag: $RAW}"
-        PACKAGE="${{ inputs.package-name }}"
-        FILENAME="${PACKAGE}-${VERSION}.zip"
+        set -euo pipefail
+        : "${VERSION:?missing}"; : "${PACKAGE:?missing}"; : "${FILENAME:?missing}"
 
         ASSET_SHA256="$(sha256sum "$FILENAME" | awk '{print $1}')"
 
