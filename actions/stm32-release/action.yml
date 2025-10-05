@@ -50,7 +50,7 @@ runs:
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER_PROD }}
+        role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
         role-duration-seconds: 600
 
@@ -74,7 +74,7 @@ runs:
       if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER_DEV }}
+        role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
         role-duration-seconds: 600
 
