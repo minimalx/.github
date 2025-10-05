@@ -1,0 +1,372 @@
+name: "Publish STM32 Firmware (GitHub Release → AWS CodeArtifact)"
+description: |
+  Bundles STM32 firmware artifacts, uploads them to a GitHub release, and
+  publishes the bundle to AWS CodeArtifact. Mirrors the behaviour of the
+  Python build-deploy action: pull_request events push to the DEV repository,
+  while pushes to refs/heads/main target the PROD repository.
+
+inputs:
+  tag:
+    description: "Version tag to use (e.g., v1.2.3 or v1.2.3-dev4). Leading 'v' is stripped for versioning."
+    required: true
+  artifact-pattern:
+    description: "Artifact name or glob pattern to download (actions/download-artifact pattern syntax)."
+    required: true
+  package-name:
+    description: "CodeArtifact package name to publish."
+    required: true
+
+  # --- Bundle / release behaviour ---
+  bundle-directory:
+    description: "Working directory used to stage downloaded artifacts and bundles."
+    required: false
+    default: "stm32-release"
+  bundle-filename:
+    description: "Optional override for the bundle filename (defaults to <package-name>-<version>.zip)."
+    required: false
+    default: ""
+  upload-release:
+    description: "Whether to upload the bundle to a GitHub release on push to main (true/false)."
+    required: false
+    default: "true"
+  allow-release-create:
+    description: "Create the GitHub release automatically when missing (true/false)."
+    required: false
+    default: "true"
+  github-release-title:
+    description: "Optional custom release title (defaults to the tag)."
+    required: false
+    default: ""
+  github-release-notes:
+    description: "Optional release notes to use when creating a new release (falls back to --generate-notes)."
+    required: false
+    default: ""
+
+  # --- CodeArtifact behaviour ---
+  publish-codeartifact:
+    description: "Whether to publish the bundle to CodeArtifact (true/false)."
+    required: false
+    default: "true"
+  codeartifact-format:
+    description: "CodeArtifact package format (generic recommended for firmware)."
+    required: false
+    default: "generic"
+  codeartifact-namespace:
+    description: "Optional CodeArtifact namespace."
+    required: false
+    default: ""
+
+  # --- AWS configuration overrides (otherwise falls back to environment variables) ---
+  aws-region:
+    description: "AWS region for CodeArtifact (falls back to AWS_REGION_CODEARTIFACT / AWS_REGION)."
+    required: false
+    default: ""
+  aws-domain:
+    description: "AWS CodeArtifact domain (falls back to AWS_DOMAIN)."
+    required: false
+    default: ""
+  aws-domain-owner-dev:
+    description: "AWS account ID for the DEV domain owner (falls back to AWS_DEV_DOMAIN_OWNER)."
+    required: false
+    default: ""
+  aws-domain-owner-prod:
+    description: "AWS account ID for the PROD domain owner (falls back to AWS_PROD_DOMAIN_OWNER or AWS_DEV_DOMAIN_OWNER)."
+    required: false
+    default: ""
+  aws-repository-dev:
+    description: "DEV CodeArtifact repository (falls back to AWS_STM32_REPO_DEV or AWS_PYTHON_REPO_DEV)."
+    required: false
+    default: ""
+  aws-repository-prod:
+    description: "PROD CodeArtifact repository (falls back to AWS_STM32_REPO_PROD or AWS_PYTHON_REPO_PROD)."
+    required: false
+    default: ""
+  aws-role-arn-dev:
+    description: "IAM role ARN to assume for DEV publishes (falls back to AWS_CODEARTIFACT_PUBLISHER_DEV or AWS_CODEARTIFACT_PUBLISHER)."
+    required: false
+    default: ""
+  aws-role-arn-prod:
+    description: "IAM role ARN to assume for PROD publishes (falls back to AWS_CODEARTIFACT_PUBLISHER_PROD or AWS_CODEARTIFACT_PUBLISHER)."
+    required: false
+    default: ""
+  role-duration-dev:
+    description: "STS session duration (seconds) for DEV assumes."
+    required: false
+    default: "1800"
+  role-duration-prod:
+    description: "STS session duration (seconds) for PROD assumes."
+    required: false
+    default: "900"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Compute firmware version
+      id: version
+      shell: bash
+      run: |
+        set -euo pipefail
+        tag='${{ inputs.tag }}'
+        if [[ -z "$tag" ]]; then
+          echo "::error::Input 'tag' is required" >&2
+          exit 1
+        fi
+        version="${tag#v}"
+        if [[ -z "$version" ]]; then
+          echo "::error::Derived empty version from tag '$tag'" >&2
+          exit 1
+        fi
+        echo "PKG_VERSION=$version" >> "$GITHUB_ENV"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "Publishing firmware version: $version"
+
+    - name: Download firmware artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-pattern }}
+        path: ${{ inputs.bundle-directory }}/artifacts
+        merge-multiple: true
+
+    - name: Verify downloaded artifacts
+      shell: bash
+      env:
+        ARTIFACT_DIR: ${{ inputs.bundle-directory }}/artifacts
+      run: |
+        set -euo pipefail
+        if [[ ! -d "$ARTIFACT_DIR" ]]; then
+          echo "::error::Artifact directory '$ARTIFACT_DIR' not found" >&2
+          exit 1
+        fi
+        mapfile -t files < <(find "$ARTIFACT_DIR" -type f -print)
+        if (( ${#files[@]} == 0 )); then
+          echo "::error::No firmware files found under '$ARTIFACT_DIR'" >&2
+          exit 1
+        fi
+        echo "Firmware bundle will include ${#files[@]} file(s):"
+        printf '  %s\n' "${files[@]}"
+        printf '%s\n' "${files[@]}" > "$ARTIFACT_DIR/.file-list"
+
+    - name: Bundle firmware payload
+      id: bundle
+      shell: bash
+      env:
+        ARTIFACT_DIR: ${{ inputs.bundle-directory }}/artifacts
+        BUNDLE_DIR: ${{ inputs.bundle-directory }}/dist
+        PACKAGE_NAME: ${{ inputs.package-name }}
+        BUNDLE_FILENAME: ${{ inputs.bundle-filename }}
+      run: |
+        set -euo pipefail
+        mapfile -t files < "$ARTIFACT_DIR/.file-list"
+        if (( ${#files[@]} == 0 )); then
+          echo "::error::No files captured for bundling" >&2
+          exit 1
+        fi
+        mkdir -p "$BUNDLE_DIR"
+        if [[ -z "$PACKAGE_NAME" ]]; then
+          echo "::error::Input 'package-name' is required" >&2
+          exit 1
+        fi
+        version="${PKG_VERSION:-}"
+        if [[ -z "$version" ]]; then
+          echo "::error::PKG_VERSION was not exported" >&2
+          exit 1
+        fi
+        bundle_name="$BUNDLE_FILENAME"
+        if [[ -z "$bundle_name" ]]; then
+          bundle_name="${PACKAGE_NAME}-${version}.zip"
+        fi
+        bundle_path="$BUNDLE_DIR/$bundle_name"
+        printf 'Bundling firmware into %s\n' "$bundle_path"
+        zip -j "$bundle_path" "${files[@]}"
+        sha256sum "$bundle_path" > "$bundle_path.sha256"
+        echo "bundle=$bundle_path" >> "$GITHUB_OUTPUT"
+        echo "checksum=$bundle_path.sha256" >> "$GITHUB_OUTPUT"
+        echo "BUNDLE_PATH=$bundle_path" >> "$GITHUB_ENV"
+        echo "BUNDLE_SHA256=$bundle_path.sha256" >> "$GITHUB_ENV"
+
+    - name: Resolve AWS configuration (DEV)
+      if: ${{ inputs.publish-codeartifact == 'true' && github.event_name == 'pull_request' }}
+      id: resolve-dev
+      shell: bash
+      env:
+        INPUT_ROLE: ${{ inputs.aws-role-arn-dev }}
+        INPUT_REGION: ${{ inputs.aws-region }}
+        INPUT_DOMAIN: ${{ inputs.aws-domain }}
+        INPUT_OWNER: ${{ inputs.aws-domain-owner-dev }}
+        INPUT_REPO: ${{ inputs.aws-repository-dev }}
+      run: |
+        set -euo pipefail
+        role="${INPUT_ROLE:-${AWS_CODEARTIFACT_PUBLISHER_DEV:-${AWS_CODEARTIFACT_PUBLISHER:-}}}"
+        region="${INPUT_REGION:-${AWS_REGION_CODEARTIFACT:-${AWS_REGION:-}}}"
+        domain="${INPUT_DOMAIN:-${AWS_DOMAIN:-}}"
+        owner="${INPUT_OWNER:-${AWS_DEV_DOMAIN_OWNER:-${AWS_DOMAIN_OWNER_DEV:-}}}"
+        repo="${INPUT_REPO:-${AWS_STM32_REPO_DEV:-${AWS_FIRMWARE_REPO_DEV:-${AWS_PYTHON_REPO_DEV:-}}}}"
+        missing=()
+        [[ -z "$role" ]] && missing+=(role)
+        [[ -z "$region" ]] && missing+=(region)
+        [[ -z "$domain" ]] && missing+=(domain)
+        [[ -z "$owner" ]] && missing+=(domain-owner)
+        [[ -z "$repo" ]] && missing+=(repository)
+        if (( ${#missing[@]} > 0 )); then
+          echo "::error::Missing DEV CodeArtifact configuration value(s): ${missing[*]}" >&2
+          exit 1
+        fi
+        echo "role=$role" >> "$GITHUB_OUTPUT"
+        echo "region=$region" >> "$GITHUB_OUTPUT"
+        echo "domain=$domain" >> "$GITHUB_OUTPUT"
+        echo "owner=$owner" >> "$GITHUB_OUTPUT"
+        echo "repository=$repo" >> "$GITHUB_OUTPUT"
+
+    - name: Configure AWS credentials (DEV)
+      if: ${{ inputs.publish-codeartifact == 'true' && github.event_name == 'pull_request' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ steps.resolve-dev.outputs.role }}
+        aws-region: ${{ steps.resolve-dev.outputs.region }}
+        role-duration-seconds: ${{ inputs.role-duration-dev }}
+
+    - name: Publish firmware to CodeArtifact (DEV)
+      if: ${{ inputs.publish-codeartifact == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        DOMAIN: ${{ steps.resolve-dev.outputs.domain }}
+        OWNER: ${{ steps.resolve-dev.outputs.owner }}
+        REPOSITORY: ${{ steps.resolve-dev.outputs.repository }}
+        FORMAT: ${{ inputs.codeartifact-format }}
+        NAMESPACE: ${{ inputs.codeartifact-namespace }}
+        PACKAGE: ${{ inputs.package-name }}
+      run: |
+        set -euo pipefail
+        bundle="${BUNDLE_PATH:-}"
+        if [[ -z "$bundle" || ! -f "$bundle" ]]; then
+          echo "::error::Bundle '$bundle' not found" >&2
+          exit 1
+        fi
+        args=(
+          --domain "$DOMAIN"
+          --domain-owner "$OWNER"
+          --repository "$REPOSITORY"
+          --format "${FORMAT:-generic}"
+          --package "$PACKAGE"
+          --package-version "$PKG_VERSION"
+          --asset-content "fileb://$bundle"
+          --asset-name "$(basename "$bundle")"
+        )
+        if [[ -n "${NAMESPACE:-}" ]]; then
+          args+=(--namespace "$NAMESPACE")
+        fi
+        echo "Publishing ${PACKAGE}@${PKG_VERSION} to CodeArtifact DEV ('$REPOSITORY')"
+        aws codeartifact publish-package-version "${args[@]}"
+
+    - name: Resolve AWS configuration (PROD)
+      if: ${{ inputs.publish-codeartifact == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      id: resolve-prod
+      shell: bash
+      env:
+        INPUT_ROLE: ${{ inputs.aws-role-arn-prod }}
+        INPUT_REGION: ${{ inputs.aws-region }}
+        INPUT_DOMAIN: ${{ inputs.aws-domain }}
+        INPUT_OWNER: ${{ inputs.aws-domain-owner-prod }}
+        INPUT_REPO: ${{ inputs.aws-repository-prod }}
+      run: |
+        set -euo pipefail
+        role="${INPUT_ROLE:-${AWS_CODEARTIFACT_PUBLISHER_PROD:-${AWS_CODEARTIFACT_PUBLISHER:-}}}"
+        region="${INPUT_REGION:-${AWS_REGION_CODEARTIFACT:-${AWS_REGION:-}}}"
+        domain="${INPUT_DOMAIN:-${AWS_DOMAIN:-}}"
+        owner_default="${AWS_PROD_DOMAIN_OWNER:-${AWS_DOMAIN_OWNER_PROD:-${AWS_DEV_DOMAIN_OWNER:-${AWS_DOMAIN_OWNER_DEV:-}}}}"
+        owner="${INPUT_OWNER:-$owner_default}"
+        repo="${INPUT_REPO:-${AWS_STM32_REPO_PROD:-${AWS_FIRMWARE_REPO_PROD:-${AWS_PYTHON_REPO_PROD:-}}}}"
+        missing=()
+        [[ -z "$role" ]] && missing+=(role)
+        [[ -z "$region" ]] && missing+=(region)
+        [[ -z "$domain" ]] && missing+=(domain)
+        [[ -z "$owner" ]] && missing+=(domain-owner)
+        [[ -z "$repo" ]] && missing+=(repository)
+        if (( ${#missing[@]} > 0 )); then
+          echo "::error::Missing PROD CodeArtifact configuration value(s): ${missing[*]}" >&2
+          exit 1
+        fi
+        echo "role=$role" >> "$GITHUB_OUTPUT"
+        echo "region=$region" >> "$GITHUB_OUTPUT"
+        echo "domain=$domain" >> "$GITHUB_OUTPUT"
+        echo "owner=$owner" >> "$GITHUB_OUTPUT"
+        echo "repository=$repo" >> "$GITHUB_OUTPUT"
+
+    - name: Configure AWS credentials (PROD)
+      if: ${{ inputs.publish-codeartifact == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ steps.resolve-prod.outputs.role }}
+        aws-region: ${{ steps.resolve-prod.outputs.region }}
+        role-duration-seconds: ${{ inputs.role-duration-prod }}
+
+    - name: Publish firmware to CodeArtifact (PROD)
+      if: ${{ inputs.publish-codeartifact == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        DOMAIN: ${{ steps.resolve-prod.outputs.domain }}
+        OWNER: ${{ steps.resolve-prod.outputs.owner }}
+        REPOSITORY: ${{ steps.resolve-prod.outputs.repository }}
+        FORMAT: ${{ inputs.codeartifact-format }}
+        NAMESPACE: ${{ inputs.codeartifact-namespace }}
+        PACKAGE: ${{ inputs.package-name }}
+      run: |
+        set -euo pipefail
+        bundle="${BUNDLE_PATH:-}"
+        if [[ -z "$bundle" || ! -f "$bundle" ]]; then
+          echo "::error::Bundle '$bundle' not found" >&2
+          exit 1
+        fi
+        args=(
+          --domain "$DOMAIN"
+          --domain-owner "$OWNER"
+          --repository "$REPOSITORY"
+          --format "${FORMAT:-generic}"
+          --package "$PACKAGE"
+          --package-version "$PKG_VERSION"
+          --asset-content "fileb://$bundle"
+          --asset-name "$(basename "$bundle")"
+        )
+        if [[ -n "${NAMESPACE:-}" ]]; then
+          args+=(--namespace "$NAMESPACE")
+        fi
+        echo "Publishing ${PACKAGE}@${PKG_VERSION} to CodeArtifact PROD ('$REPOSITORY')"
+        aws codeartifact publish-package-version "${args[@]}"
+
+    - name: Upload bundle to GitHub release
+      if: ${{ inputs.upload-release == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        TITLE: ${{ inputs.github-release-title }}
+        NOTES: ${{ inputs.github-release-notes }}
+        ALLOW_CREATE: ${{ inputs.allow-release-create }}
+      run: |
+        set -euo pipefail
+        bundle="${BUNDLE_PATH:-}"
+        checksum="${BUNDLE_SHA256:-}"
+        if [[ -z "$bundle" || ! -f "$bundle" ]]; then
+          echo "::error::Bundle '$bundle' not found" >&2
+          exit 1
+        fi
+        tag="$TAG"
+        title="$TITLE"
+        [[ -z "$title" ]] && title="$tag"
+        if [[ "$ALLOW_CREATE" == "true" ]]; then
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            echo "Creating GitHub release $tag"
+            args=(--title "$title")
+            if [[ -n "$NOTES" ]]; then
+              args+=(--notes "$NOTES")
+            else
+              args+=(--generate-notes)
+            fi
+            gh release create "$tag" "${args[@]}"
+          fi
+        fi
+        echo "Uploading bundle $(basename "$bundle") to release $tag"
+        gh release upload "$tag" "$bundle" --clobber
+        if [[ -n "$checksum" && -f "$checksum" ]]; then
+          gh release upload "$tag" "$checksum" --clobber
+        fi
