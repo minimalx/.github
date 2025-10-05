@@ -55,8 +55,9 @@ runs:
         echo "VERSION=$VERSION"   >> "$GITHUB_ENV"
         echo "PACKAGE=$PACKAGE"   >> "$GITHUB_ENV"
         echo "FILENAME=$FILENAME" >> "$GITHUB_ENV"
+        echo "NAMESPACE=$NAMESPACE" >> "$GITHUB_ENV"
 
-        echo "Parsed VERSION=$VERSION, PACKAGE=$PACKAGE, FILENAME=$FILENAME"
+        echo "Parsed VERSION=$VERSION, PACKAGE=$PACKAGE, FILENAME=$FILENAME, NAMESPACE=$NAMESPACE"
 
     - name: Create firmware bundle (.zip)
       shell: bash
