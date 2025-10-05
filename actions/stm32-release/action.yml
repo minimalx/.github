@@ -52,22 +52,32 @@ runs:
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
-        role-duration-seconds: 900
+        role-duration-seconds: 1800
 
-    - name: Upload bundle to CodeArtifact (PROD / generic repo)
+    - name: Publish generic package to CodeArtifact (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       shell: bash
       run: |
-        TOKEN=$(aws codeartifact get-authorization-token \
+        # Re-derive a clean semver (e.g., 0.1.7 or 0.1.7-dev4) from the tag
+        RAW="${{ inputs.tag }}"
+        VERSION="$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]([0-9A-Za-z\.-]*)?')"
+        : "${VERSION:?Could not parse version from tag: $RAW}"
+        PACKAGE="${{ inputs.package-name }}"
+        FILENAME="${PACKAGE}-${VERSION}.zip"
+
+        # Hash the asset per CodeArtifact generic requirements
+        ASSET_SHA256="$(sha256sum "$FILENAME" | awk '{print $1}')"
+
+        aws codeartifact publish-package-version \
           --domain "${{ env.AWS_DOMAIN }}" \
           --domain-owner "${{ env.AWS_DOMAIN_OWNER }}" \
-          --region "${{ env.AWS_REGION_CODEARTIFACT }}" \
-          --query authorizationToken \
-          --output text)
-
-        curl -v -u aws:$TOKEN \
-          --upload-file "$FILENAME" \
-          "https://${{ env.AWS_DOMAIN }}-${{ env.AWS_DOMAIN_OWNER }}.d.codeartifact.${{ env.AWS_REGION_CODEARTIFACT }}.amazonaws.com/${{ env.AWS_STM32_REPO_PROD }}/$PACKAGE/$VERSION/$FILENAME"
+          --repository "${{ env.AWS_STM32_REPO_PROD }}" \
+          --format generic \
+          --package "$PACKAGE" \
+          --package-version "$VERSION" \
+          --asset-content "$FILENAME" \
+          --asset-name "$FILENAME" \
+          --asset-sha256 "$ASSET_SHA256"
 
     # ===== DEV path (PRs and non-main pushes) =====
     - name: Configure AWS credentials (DEV)
@@ -76,19 +86,27 @@ runs:
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
-        role-duration-seconds: 900
+        role-duration-seconds: 1800
 
-    - name: Upload bundle to CodeArtifact (DEV / generic repo)
+    - name: Publish generic package to CodeArtifact (DEV)
       if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
       shell: bash
       run: |
-        TOKEN=$(aws codeartifact get-authorization-token \
+        RAW="${{ inputs.tag }}"
+        VERSION="$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]([0-9A-Za-z\.-]*)?')"
+        : "${VERSION:?Could not parse version from tag: $RAW}"
+        PACKAGE="${{ inputs.package-name }}"
+        FILENAME="${PACKAGE}-${VERSION}.zip"
+
+        ASSET_SHA256="$(sha256sum "$FILENAME" | awk '{print $1}')"
+
+        aws codeartifact publish-package-version \
           --domain "${{ env.AWS_DOMAIN }}" \
           --domain-owner "${{ env.AWS_DOMAIN_OWNER }}" \
-          --region "${{ env.AWS_REGION_CODEARTIFACT }}" \
-          --query authorizationToken \
-          --output text)
-
-        curl -v -u aws:$TOKEN \
-          --upload-file "$FILENAME" \
-          "https://${{ env.AWS_DOMAIN }}-${{ env.AWS_DOMAIN_OWNER }}.d.codeartifact.${{ env.AWS_REGION_CODEARTIFACT }}.amazonaws.com/${{ env.AWS_STM32_REPO_DEV }}/$PACKAGE/$VERSION/$FILENAME"
+          --repository "${{ env.AWS_STM32_REPO_DEV }}" \
+          --format generic \
+          --package "$PACKAGE" \
+          --package-version "$VERSION" \
+          --asset-content "$FILENAME" \
+          --asset-name "$FILENAME" \
+          --asset-sha256 "$ASSET_SHA256"
