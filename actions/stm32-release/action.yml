@@ -68,6 +68,17 @@ runs:
         (cd release && zip -r "../$FILENAME" artifacts)
         ls -l "$FILENAME"
 
+    # Optional: sanity-check that the PAT is present for PROD
+    - name: Check PAT availability (PROD)
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -z "${GITHUB_ACTIONS_BOT:-}" ]]; then
+          echo "ERROR: GITHUB_ACTIONS_BOT env var (PAT) not set. Refusing to attempt release." >&2
+          exit 1
+        fi
+
     # ====================== PROD path (pushes to main) ======================
     - name: Configure AWS credentials (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -97,7 +108,7 @@ runs:
           --asset-content "$FILENAME" \
           --asset-name "$FILENAME" \
           --asset-sha256 "$ASSET_SHA256"
-          
+  
     - name: Create/Update GitHub Release (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       uses: softprops/action-gh-release@v2
@@ -108,8 +119,8 @@ runs:
         prerelease: false
         generate_release_notes: true
         files: ${{ env.FILENAME }}
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
+        # You can pass the PAT either via the 'token' input...
+        token: ${{ env.GITHUB_ACTIONS_BOT }}
 
     # ================== DEV path (PRs and non-main pushes) ==================
     - name: Configure AWS credentials (DEV)
