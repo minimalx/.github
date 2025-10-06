@@ -25,13 +25,20 @@ if [[ ${#NOTES_RAW} -gt $MAX ]]; then
   NOTES_RAW="${NOTES_RAW:0:$MAX}"$'\n''…(truncated)'
 fi
 
-# Save plain text and JSON-escape for Block Kit
+# Save as-is for debugging if you want
 printf '%s' "$NOTES_RAW" > notes.txt
+
+# JSON-escape (so Slack Block Kit is happy)
 NOTES_ESCAPED=$(python3 - <<'PY'
 import json,sys
 print(json.dumps(sys.stdin.read())[1:-1])
 PY
 < notes.txt)
 
-# Expose for later steps
-echo "notes_escaped=$NOTES_ESCAPED" >> "$GITHUB_OUTPUT"
+# >>> This is the important part: use a delimiter for multiline-safe output <<<
+delim="EOF_$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+{
+  echo "notes_escaped<<$delim"
+  printf '%s\n' "$NOTES_ESCAPED"
+  echo "$delim"
+} >> "$GITHUB_OUTPUT"
