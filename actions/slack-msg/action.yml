@@ -1,0 +1,130 @@
+name: "Notify Slack: Firmware Release"
+description: "Posts a Slack message announcing a new firmware release with auto-generated release notes."
+author: "Minimal"
+branding:
+  icon: "send"
+  color: "purple"
+
+inputs:
+  tag:
+    description: "Git tag of the release (e.g. BCU_APP_v1.2.3)"
+    required: true
+  package_name:
+    description: "Package name (e.g., bcu-app or bcu-bootloader)"
+    required: true
+  board_name:
+    description: "Board/device name to show in header (e.g., BCU)"
+    required: true
+
+  notify_method:
+    description: "'bot' to use chat.postMessage, or 'webhook' for an Incoming Webhook."
+    required: true
+    default: "bot"
+
+  slack_channel_id:
+    description: "Slack channel ID (required when notify_method == 'bot', e.g., C0123ABCD)"
+    required: false
+  slack_bot_token:
+    description: "Slack bot token with chat:write scope (required when notify_method == 'bot')"
+    required: false
+
+  slack_webhook_url:
+    description: "Slack Incoming Webhook URL (required when notify_method == 'webhook')"
+    required: false
+
+  github_token:
+    description: "Token for 'gh' to call releases/generate-notes (usually GITHUB_TOKEN)."
+    required: true
+  target_commitish:
+    description: "Commitish for notes generation (defaults to current SHA)."
+    required: false
+    default: "${{ github.sha }}"
+
+  header_emoji:
+    description: "Emoji prefix in the header line."
+    required: false
+    default: "🚀"
+  max_notes_chars:
+    description: "Max characters of notes to include (Block Kit plain_text limit ≈ 3000)."
+    required: false
+    default: "2900"
+  notes_fallback_text:
+    description: "Fallback text when auto-generated notes are empty."
+    required: false
+    default: "(No auto-generated notes; see commits between tags.)"
+  app_name:
+    description: "Optional label for the component (e.g., main-app, bootloader)."
+    required: false
+    default: ""
+
+outputs:
+  release_url:
+    description: "GitHub URL for the release tag."
+    value: ${{ steps.expose.outputs.release_url }}
+  slack_ts:
+    description: "Slack message timestamp (when using bot method)."
+    value: ${{ steps.post-bot.outputs.slack_ts }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure scripts are executable
+      shell: bash
+      run: chmod +x "$GITHUB_ACTION_PATH"/scripts/*.sh
+
+    - name: Validate inputs
+      shell: bash
+      run: "$GITHUB_ACTION_PATH/scripts/validate_inputs.sh"
+      env:
+        NOTIFY_METHOD:       ${{ inputs.notify_method }}
+        SLACK_CHANNEL_ID:    ${{ inputs.slack_channel_id }}
+        SLACK_BOT_TOKEN:     ${{ inputs.slack_bot_token }}
+        SLACK_WEBHOOK_URL:   ${{ inputs.slack_webhook_url }}
+
+    - name: Generate release notes
+      id: notes
+      shell: bash
+      run: "$GITHUB_ACTION_PATH/scripts/generate_notes.sh"
+      env:
+        GH_TOKEN:            ${{ inputs.github_token }}
+        GITHUB_REPOSITORY:   ${{ github.repository }}
+        TAG:                 ${{ inputs.tag }}
+        TARGET_COMMITISH:    ${{ inputs.target_commitish }}
+        MAX_NOTES_CHARS:     ${{ inputs.max_notes_chars }}
+        NOTES_FALLBACK_TEXT: ${{ inputs.notes_fallback_text }}
+
+    - name: Build Slack payload
+      id: payload
+      shell: bash
+      env:
+        HEADER_EMOJI:        ${{ inputs.header_emoji }}
+        BOARD_NAME:          ${{ inputs.board_name }}
+        APP_NAME:            ${{ inputs.app_name }}
+        PACKAGE_NAME:        ${{ inputs.package_name }}
+        TAG:                 ${{ inputs.tag }}
+        GITHUB_REPOSITORY:   ${{ github.repository }}
+        GITHUB_ACTOR:        ${{ github.actor }}
+        NOTES_ESCAPED:       ${{ steps.notes.outputs.notes_escaped }}
+      run: |
+        "$GITHUB_ACTION_PATH/scripts/build_payload.sh"
+
+    - name: Post to Slack (bot)
+      id: post-bot
+      if: ${{ inputs.notify_method == 'bot' }}
+      shell: bash
+      run: "$GITHUB_ACTION_PATH/scripts/post_slack_bot.sh"
+      env:
+        SLACK_BOT_TOKEN:   ${{ inputs.slack_bot_token }}
+        SLACK_CHANNEL_ID:  ${{ inputs.slack_channel_id }}
+
+    - name: Post to Slack (webhook)
+      if: ${{ inputs.notify_method == 'webhook' }}
+      shell: bash
+      run: "$GITHUB_ACTION_PATH/scripts/post_slack_webhook.sh"
+      env:
+        SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
+
+    - name: Expose outputs
+      id: expose
+      shell: bash
+      run: "$GITHUB_ACTION_PATH/scripts/expose_outputs.sh"
