@@ -12,7 +12,7 @@ resp="$(curl -sS -X POST 'https://slack.com/api/chat.postMessage' \
   "channel": "${SLACK_CHANNEL_ID}",
   "unfurl_links": false,
   "unfurl_media": false,
-  $(jq -c '. | to_entries | map(select(.key=="blocks")) | from_entries' < payload.json)
+  "blocks": $(jq -c '.blocks' < payload.json)
 }
 JSON
 )"
