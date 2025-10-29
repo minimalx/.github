@@ -17,11 +17,22 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install clang-format-20
+    - name: Install clang-format-20 via APT (no man-db)
       shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
-        sudo apt-get install -y clang-format-20
+        set -euxo pipefail
+        # Remove man-db so the trigger never fires
+        sudo apt-get -yq remove --purge man-db || true
+
+        # Add LLVM apt repo quickly
+        curl -fsSL https://apt.llvm.org/llvm.sh -o llvm.sh
+        sudo bash llvm.sh all || true  # this just adds sources & keys on newer script versions
+
+        # Install clang-format without extra recommends (fewer packages -> faster)
+        sudo apt-get update -yq
+        sudo apt-get install -yq --no-install-recommends clang-format-20
 
     - name: Verify clang-format version
       shell: bash
@@ -35,3 +46,4 @@ runs:
           --base-ref "${BASE_REF:-main}" \
           --changed-exts "${{ inputs.changed-exts }}" \
           --ignore-files "${{ inputs.ignore-files }}"
+
