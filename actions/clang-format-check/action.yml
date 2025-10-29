@@ -25,20 +25,41 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install clang-format (download release, no APT)
+    - name: Install clang-format-20 fast (no llvm.sh, no MS repos)
       shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
         set -euxo pipefail
-        ver="${{ inputs.clang-format-version }}"
-        suf="${{ inputs.ubuntu-suffix }}"
-        url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${ver}/clang+llvm-${ver}-x86_64-linux-gnu-${suf}.tar.xz"
 
-        work="$(mktemp -d)"
-        curl -L "$url" | tar -xJ -C "$work"
-        # Extract just the binary to keep things tiny and fast
-        binpath="$(find "$work" -type f -path "*/bin/clang-format" | head -n1)"
-        sudo install -m 0755 "$binpath" /usr/local/bin/clang-format-20
-        sudo ln -sf /usr/local/bin/clang-format-20 /usr/local/bin/clang-format
+        # If already present on the image, don't do anything
+        if command -v clang-format-20 >/dev/null 2>&1; then
+          clang-format-20 --version
+          exit 0
+        fi
+
+        # Avoid slow man-db triggers entirely
+        sudo apt-get -yq remove --purge man-db || true
+
+        # The runner image has Microsoft repos that can time out -> remove them
+        sudo rm -f /etc/apt/sources.list.d/*microsoft*.list || true
+        sudo rm -f /etc/apt/sources.list.d/*azure*.list || true
+        sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list || true
+
+        # Add only the LLVM 20 repo + key (NO llvm.sh; it drags in lots of stuff)
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+        echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" \
+          | sudo tee /etc/apt/sources.list.d/llvm20.list >/dev/null
+
+        # Short network timeouts and minimal retries so we fail fast on any flaky mirror
+        AOPTS='-o Acquire::http::Timeout=5 -o Acquire::https::Timeout=5 -o Acquire::Retries=1'
+
+        sudo apt-get $AOPTS update -yq
+        sudo apt-get $AOPTS install -yq --no-install-recommends clang-format-20
+
+        clang-format-20 --version
+
 
     - name: Verify clang-format version
       shell: bash
