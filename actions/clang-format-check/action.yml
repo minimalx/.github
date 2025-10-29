@@ -10,29 +10,35 @@ inputs:
     required: false
     default: "c,cc,cpp,h,proto"
   ignore-files:
-    description: "Comma-separated list of files or glob patterns to ignore (e.g. 'generated/*,*.pb.h')"
+    description: "Comma-separated list of files or glob patterns to ignore"
     required: false
     default: ""
+  clang-format-version:
+    description: "LLVM clang-format version"
+    required: false
+    default: "20.1.8"  # update as needed
+  ubuntu-suffix:
+    description: "Runner suffix (24.04 on ubuntu-latest today)"
+    required: false
+    default: "ubuntu-24.04"
 
 runs:
   using: "composite"
   steps:
-    - name: Install clang-format-20 via APT (no man-db)
+    - name: Install clang-format (download release, no APT)
       shell: bash
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
         set -euxo pipefail
-        # Remove man-db so the trigger never fires
-        sudo apt-get -yq remove --purge man-db || true
+        ver="${{ inputs.clang-format-version }}"
+        suf="${{ inputs.ubuntu-suffix }}"
+        url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${ver}/clang+llvm-${ver}-x86_64-linux-gnu-${suf}.tar.xz"
 
-        # Add LLVM apt repo quickly
-        curl -fsSL https://apt.llvm.org/llvm.sh -o llvm.sh
-        sudo bash llvm.sh all || true  # this just adds sources & keys on newer script versions
-
-        # Install clang-format without extra recommends (fewer packages -> faster)
-        sudo apt-get update -yq
-        sudo apt-get install -yq --no-install-recommends clang-format-20
+        work="$(mktemp -d)"
+        curl -L "$url" | tar -xJ -C "$work"
+        # Extract just the binary to keep things tiny and fast
+        binpath="$(find "$work" -type f -path "*/bin/clang-format" | head -n1)"
+        sudo install -m 0755 "$binpath" /usr/local/bin/clang-format-20
+        sudo ln -sf /usr/local/bin/clang-format-20 /usr/local/bin/clang-format
 
     - name: Verify clang-format version
       shell: bash
@@ -46,4 +52,3 @@ runs:
           --base-ref "${BASE_REF:-main}" \
           --changed-exts "${{ inputs.changed-exts }}" \
           --ignore-files "${{ inputs.ignore-files }}"
-
