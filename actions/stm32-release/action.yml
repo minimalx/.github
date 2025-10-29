@@ -65,14 +65,15 @@ runs:
         set -euo pipefail
         mkdir -p release
 
-        # Copy artifacts to a directory named after the file (without .zip)
         folder_name="${FILENAME%.zip}"
-        cp -r artifacts "release/$folder_name"
 
-        # Zip the directory so the internal folder matches the bundle name
+        # Move artifacts -> renamed folder temporarily, zip, then restore
+        mv release/artifacts "release/$folder_name"
         (cd release && zip -r "../$FILENAME" "$folder_name")
+        mv "release/$folder_name" release/artifacts
 
         ls -l "$FILENAME"
+
 
     # Optional: sanity-check that the PAT is present for PROD
     - name: Check PAT availability (PROD)
