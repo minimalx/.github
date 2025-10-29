@@ -64,8 +64,14 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p release
-        # Zip the downloaded artifacts directory into the agreed filename at repo root
-        (cd release && zip -r "../$FILENAME" artifacts)
+
+        # Copy artifacts to a directory named after the file (without .zip)
+        folder_name="${FILENAME%.zip}"
+        cp -r artifacts "release/$folder_name"
+
+        # Zip the directory so the internal folder matches the bundle name
+        (cd release && zip -r "../$FILENAME" "$folder_name")
+
         ls -l "$FILENAME"
 
     # Optional: sanity-check that the PAT is present for PROD
