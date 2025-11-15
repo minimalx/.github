@@ -13,11 +13,11 @@ runs:
   steps:
     - name: Generate submodule_versions.txt
       shell: bash
-      run: python3 "${{ github.action_path }}/scripts/collect_submodules.py"
+      run: python3 "${GITHUB_ACTION_PATH}/collect_submodules.py"
 
     - name: Generate release JSON
       shell: bash
-      run: python3 "${{ github.action_path }}/scripts/generate_release_json.py" \
+      run: python3 "${GITHUB_ACTION_PATH}/generate_release_json.py" \
         --output "${{ inputs.output-file }}"
 
     - name: Upload submodule_versions.txt artifact
