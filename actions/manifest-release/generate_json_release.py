@@ -113,6 +113,7 @@ def main():
             print(f"Warning: external versions file '{ext_path}' not found. Skipping.", file=sys.stderr)
 
     data = {
+        "format_version": "0.1",
         "date": date_str,
         "creator": creator,
         "submodules": submodules,
