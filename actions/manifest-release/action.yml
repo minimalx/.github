@@ -18,7 +18,7 @@ runs:
     - name: Generate release JSON
       shell: bash
       run: python3 "${GITHUB_ACTION_PATH}/generate_json_release.py" \
-        --output "${{ inputs.output-file }}"
+        -o "${{ inputs.output-file }}"
 
     - name: Upload submodule_versions.txt artifact
       uses: actions/upload-artifact@v4
