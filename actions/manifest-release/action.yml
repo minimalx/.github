@@ -1,0 +1,33 @@
+name: "Submodule versions and release metadata"
+description: "Collect submodule versions and generate release metadata JSON"
+author: "Your Name"
+
+inputs:
+  output-file:
+    description: "Name of the generated release JSON file"
+    required: false
+    default: "release.json"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate submodule_versions.txt
+      shell: bash
+      run: python3 "${{ github.action_path }}/scripts/collect_submodules.py"
+
+    - name: Generate release JSON
+      shell: bash
+      run: python3 "${{ github.action_path }}/scripts/generate_release_json.py" \
+        --output "${{ inputs.output-file }}"
+
+    - name: Upload submodule_versions.txt artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: submodule-versions
+        path: submodule_versions.txt
+
+    - name: Upload release JSON artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-json
+        path: ${{ inputs.output-file }}
