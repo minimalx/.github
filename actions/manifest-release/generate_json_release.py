@@ -22,7 +22,61 @@ def parse_args():
         default="submodule_versions.txt",
         help="Input submodule versions file (default: submodule_versions.txt)",
     )
+    parser.add_argument(
+        "-e", "--ext-versions",
+        dest="ext_versions",
+        default=None,
+        help="Optional external JSON file with additional submodules",
+    )
     return parser.parse_args()
+
+def load_ext_submodules(path: Path):
+    """Load additional submodules from a JSON file.
+
+    Expected format:
+    {
+      "submodules": [
+        {"name": "...", "version": "..."},
+        ...
+      ]
+    }
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"Warning: could not read external versions file '{path}': {e}", file=sys.stderr)
+        return []
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"Warning: invalid JSON in external versions file '{path}': {e}", file=sys.stderr)
+        return []
+
+    if not isinstance(data, dict):
+        print(f"Warning: external versions file '{path}' must contain a JSON object", file=sys.stderr)
+        return []
+
+    submodules = data.get("submodules", [])
+    if not isinstance(submodules, list):
+        print(f"Warning: 'submodules' in '{path}' must be a list", file=sys.stderr)
+        return []
+
+    normalized = []
+    for idx, item in enumerate(submodules):
+        if not isinstance(item, dict):
+            print(f"Warning: submodule #{idx} in '{path}' is not an object, skipping", file=sys.stderr)
+            continue
+        name = item.get("name")
+        version = item.get("version", "")
+        if not isinstance(name, str):
+            print(f"Warning: submodule #{idx} in '{path}' has no valid 'name', skipping", file=sys.stderr)
+            continue
+        if not isinstance(version, str):
+            version = str(version)
+        normalized.append({"name": name, "version": version})
+
+    return normalized
 
 def main():
     args = parse_args()
@@ -36,6 +90,7 @@ def main():
     date_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
     creator = os.environ.get("GITHUB_ACTOR", "")
 
+    # Parse main submodule file (plain text)
     submodules = []
     with submodules_path.open(encoding="utf-8") as f:
         for line in f:
@@ -47,6 +102,15 @@ def main():
             name = parts[0]
             version = parts[1] if len(parts) == 2 else ""
             submodules.append({"name": name, "version": version})
+
+    # Append external JSON submodules if provided
+    if args.ext_versions:
+        ext_path = Path(args.ext_versions)
+        if ext_path.is_file():
+            extra_submodules = load_ext_submodules(ext_path)
+            submodules.extend(extra_submodules)
+        else:
+            print(f"Warning: external versions file '{ext_path}' not found. Skipping.", file=sys.stderr)
 
     data = {
         "date": date_str,

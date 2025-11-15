@@ -7,6 +7,9 @@ inputs:
     description: "Name of the generated release JSON file"
     required: false
     default: "release.json"
+  ext-versions:
+    description: "File containing additonal firmware releases not covered by submodules"
+    required: false
 
 runs:
   using: "composite"
@@ -17,7 +20,7 @@ runs:
 
     - name: Generate release JSON
       shell: bash
-      run: python3 "${GITHUB_ACTION_PATH}/generate_json_release.py" -o "${{ inputs.output-file }}"
+      run: python3 "${GITHUB_ACTION_PATH}/generate_json_release.py" -o "${{ inputs.output-file }}" -e "${{ inputs.ext-versions}}"
 
     - name: Upload submodule_versions.txt artifact
       uses: actions/upload-artifact@v4
