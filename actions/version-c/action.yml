@@ -1,17 +1,26 @@
 name: "Minimal C: Versioning"
 description: "Calculate semver and generate version.h"
+
 inputs:
   tag-prefix:
     description: 'Tag prefix (e.g. "v")'
     required: true
+
   project-root:
     description: 'Folder containing the project (default is root of the repo)'
     required: false
     default: "."
+
   bump-pattern-prefix:
     description: 'Prefix for commit message patterns that trigger version bumps'
     required: false
     default: ""
+
+  skip_header_generation:
+    description: 'Skip generation of version.h'
+    required: false
+    default: "false"
+
 outputs:
   version:
     description: "Calculated semantic version"
@@ -26,7 +35,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    # Assumes the caller already did actions/checkout with fetch-depth: 0
     - name: Calculate Version
       id: version
       uses: paulhatch/semantic-version@v5.4.0
@@ -45,6 +53,7 @@ runs:
         echo "VERSION_TAG=${{ steps.version.outputs.version_tag }}" >> "$GITHUB_ENV"
 
     - name: Generate version.h
+      if: ${{ inputs.skip_header_generation != 'true' }}
       shell: bash
       run: |
         python3 "${GITHUB_ACTION_PATH}/generate_version_h.py" \
