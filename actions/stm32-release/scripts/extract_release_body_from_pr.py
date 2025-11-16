@@ -16,12 +16,21 @@ CODERABBIT_TITLE_REGEX = re.compile(r"(?im)^summary by coderabbit\b")
 def github_api_get(url: str, token: str):
     headers = {
         "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
+        # Include the old groot preview just in case, plus normal v3 JSON
+        "Accept": "application/vnd.github+json, application/vnd.github.groot-preview+json",
         "User-Agent": "stm32-release-action",
     }
     req = Request(url, headers=headers)
-    with urlopen(req) as resp:
-        return json.load(resp)
+    try:
+        with urlopen(req) as resp:
+            return json.load(resp)
+    except HTTPError as e:
+        print(f"[extract-release-body] GitHub API HTTP error {e.code}: {e.reason} ({url})", file=sys.stderr)
+    except URLError as e:
+        print(f"[extract-release-body] GitHub API URL error: {e.reason} ({url})", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"[extract-release-body] GitHub API unexpected error: {e} ({url})", file=sys.stderr)
+    return None
 
 
 def extract_summary_section(body: str) -> str | None:
@@ -58,18 +67,16 @@ def extract_coderabbit_summary_from_comment(body: str) -> str | None:
 
     lines = body.strip().splitlines()
 
-    # Require first non-empty line to look like "Summary by CodeRabbit"
-    first_non_empty_idx = next(
-        (i for i, line in enumerate(lines) if line.strip()), None
-    )
+    first_non_empty_idx = next((i for i, line in enumerate(lines) if line.strip()), None)
     if first_non_empty_idx is None:
         return None
 
     if not CODERABBIT_TITLE_REGEX.match(lines[first_non_empty_idx].strip()):
         return None
 
-    # Skip title line and any immediate separators (e.g. '---', '___')
     content_lines = lines[first_non_empty_idx + 1 :]
+
+    # Skip Markdown separators like '---'
     while content_lines and re.fullmatch(r"\s*-{3,}\s*|\s*_{3,}\s*", content_lines[0]):
         content_lines = content_lines[1:]
 
@@ -83,13 +90,9 @@ def find_coderabbit_summary(repo: str, pr_number: int, token: str) -> str | None
     Uses the *latest* matching comment.
     """
     url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-    try:
-        comments = github_api_get(url, token)
-    except Exception as e:  # noqa: BLE001
-        print(f"Error fetching issue comments: {e}", file=sys.stderr)
-        return None
-
+    comments = github_api_get(url, token)
     if not isinstance(comments, list):
+        print("[extract-release-body] No issue comments found or API error.", file=sys.stderr)
         return None
 
     summary_candidates: list[str] = []
@@ -99,7 +102,48 @@ def find_coderabbit_summary(repo: str, pr_number: int, token: str) -> str | None
         if summary:
             summary_candidates.append(summary)
 
-    return summary_candidates[-1] if summary_candidates else None
+    if summary_candidates:
+        print("[extract-release-body] Found CodeRabbit summary comment.", file=sys.stderr)
+        return summary_candidates[-1]
+
+    print("[extract-release-body] No CodeRabbit summary comment found.", file=sys.stderr)
+    return None
+
+
+def find_pr_for_commit(repo: str, sha: str, token: str) -> dict | None:
+    """
+    Try to find a PR for the given commit SHA.
+
+    Strategy:
+      1. Use /commits/{sha}/pulls
+      2. If that fails or is empty, scan recent PRs and match merge_commit_sha/head.sha
+    """
+    # 1) Preferred: commit -> PRs
+    url = f"https://api.github.com/repos/{repo}/commits/{sha}/pulls"
+    prs = github_api_get(url, token)
+    if isinstance(prs, list) and prs:
+        print(f"[extract-release-body] /commits/{sha}/pulls returned {len(prs)} PR(s).", file=sys.stderr)
+        return prs[0]
+    print(f"[extract-release-body] /commits/{sha}/pulls returned no PRs; trying fallback search.", file=sys.stderr)
+
+    # 2) Fallback: look at recent PRs and match by SHA
+    url = f"https://api.github.com/repos/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
+    prs = github_api_get(url, token)
+    if not isinstance(prs, list):
+        print("[extract-release-body] Fallback PR search failed.", file=sys.stderr)
+        return None
+
+    for pr in prs:
+        if pr.get("merge_commit_sha") == sha:
+            print(f"[extract-release-body] Matched PR #{pr.get('number')} by merge_commit_sha.", file=sys.stderr)
+            return pr
+        head = pr.get("head") or {}
+        if head.get("sha") == sha:
+            print(f"[extract-release-body] Matched PR #{pr.get('number')} by head.sha.", file=sys.stderr)
+            return pr
+
+    print("[extract-release-body] No PR matched the commit SHA in recent PRs.", file=sys.stderr)
+    return None
 
 
 def write_github_output(body: str) -> None:
@@ -131,50 +175,44 @@ def main(argv: list[str]) -> int:
     repo = os.environ.get("GITHUB_REPOSITORY")
     sha = os.environ.get("GITHUB_SHA")
 
+    print(f"[extract-release-body] repo={repo}, sha={sha}", file=sys.stderr)
+
     if not token or not repo or not sha:
         print(
-            "GITHUB_TOKEN (or GITHUB_ACTIONS_BOT), GITHUB_REPOSITORY and "
-            "GITHUB_SHA must be set.",
+            "[extract-release-body] Missing GITHUB_TOKEN / GITHUB_REPOSITORY / GITHUB_SHA; using fallback.",
             file=sys.stderr,
         )
         fallback = f"Release for tag {args.tag}"
         write_github_output(fallback)
         return 0
 
-    # 1) Find PR associated with this commit
-    try:
-        prs = github_api_get(
-            f"https://api.github.com/repos/{repo}/commits/{sha}/pulls", token
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"Error fetching PRs for commit: {e}", file=sys.stderr)
-        prs = []
-
-    if not isinstance(prs, list) or not prs:
+    pr = find_pr_for_commit(repo, sha, token)
+    if not isinstance(pr, dict):
         print(
-            f"No pull requests found for commit {sha}; "
-            "falling back to generic release body.",
+            "[extract-release-body] No PR found for this commit; using fallback.",
             file=sys.stderr,
         )
         fallback = f"Release for tag {args.tag}"
         write_github_output(fallback)
         return 0
 
-    pr = prs[0]
     pr_number = pr.get("number")
     pr_body = pr.get("body") or ""
+    print(f"[extract-release-body] Using PR #{pr_number}.", file=sys.stderr)
 
-    # 2) Try `## Summary` section in PR body
+    # 1) Try '## Summary' in PR body
     summary = extract_summary_section(pr_body)
+    if summary:
+        print("[extract-release-body] Found 'Summary' section in PR body.", file=sys.stderr)
 
-    # 3) If not present, try CodeRabbit comment
+    # 2) If not found, try CodeRabbit comment
     if not summary and pr_number is not None:
         summary = find_coderabbit_summary(repo, pr_number, token)
 
-    # 4) Fallbacks
+    # 3) Fallbacks
     if not summary:
         print(
-            "No explicit summary found; using full PR body or generic fallback.",
+            "[extract-release-body] No explicit summary found; using full PR body or generic fallback.",
             file=sys.stderr,
         )
         release_body = pr_body.strip() or f"Release for tag {args.tag} (PR #{pr_number})"
