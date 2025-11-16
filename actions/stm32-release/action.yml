@@ -18,6 +18,9 @@ inputs:
   namespace:
     description: "CodeArtifact namespace for the generic package (required by generic format, e.g., 'bcu')."
     required: true
+  github_token:
+    description: "Token for 'gh' to call releases/generate-notes (usually GITHUB_TOKEN)."
+    required: true
 
 runs:
   using: "composite"
@@ -68,6 +71,8 @@ runs:
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       id: release-body
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
         set -euo pipefail
         python "${GITHUB_ACTION_PATH}/scripts/extract_release_body_from_pr.py" --tag "${{ inputs.tag }}"
