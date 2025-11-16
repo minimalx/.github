@@ -29,62 +29,24 @@ runs:
         path: release/artifacts
         merge-multiple: true
 
-    # Derive VERSION (regex), PACKAGE and FILENAME once and export to env
     - name: Derive version and filenames
       shell: bash
       run: |
         set -euo pipefail
-        RAW="${{ inputs.tag }}"
-        # Extract the first semver-like token (allows -rc, -dev, +build metadata).
-        # Hyphen is placed at the END of the class to avoid "Invalid range end".
-        VERSION="$(printf '%s' "$RAW" | sed -E 's/.*([0-9]+\.[0-9]+\.[0-9][0-9A-Za-z.+-]*).*/\1/;t;d' || true)"
-        if [[ -z "${VERSION:-}" ]]; then
-          echo "Could not parse version from tag: $RAW" >&2
-          exit 1
-        fi
-        
-        NAMESPACE="${{ inputs.namespace }}"
-        if [[ -z "${NAMESPACE:-}" ]]; then
-          echo "Namespace is required for CodeArtifact generic format." >&2
-          exit 1
-        fi
-
-        PACKAGE="${{ inputs.package-name }}"
-        FILENAME="${PACKAGE}-${VERSION}.zip"
-
-        echo "VERSION=$VERSION"   >> "$GITHUB_ENV"
-        echo "PACKAGE=$PACKAGE"   >> "$GITHUB_ENV"
-        echo "FILENAME=$FILENAME" >> "$GITHUB_ENV"
-        echo "NAMESPACE=$NAMESPACE" >> "$GITHUB_ENV"
-
-        echo "Parsed VERSION=$VERSION, PACKAGE=$PACKAGE, FILENAME=$FILENAME, NAMESPACE=$NAMESPACE"
+        python "${GITHUB_ACTION_PATH}/scripts/derive_metadata.py" "${{ inputs.tag }}" "${{ inputs['package-name'] }}" "${{ inputs.namespace }}"
 
     - name: Create firmware bundle (.zip)
       shell: bash
       run: |
         set -euo pipefail
-        mkdir -p release
+        python "${GITHUB_ACTION_PATH}/scripts/create_firmware_bundle.py"
 
-        folder_name="${FILENAME%.zip}"
-
-        # Move artifacts -> renamed folder temporarily, zip, then restore
-        mv release/artifacts "release/$folder_name"
-        (cd release && zip -r "../$FILENAME" "$folder_name")
-        mv "release/$folder_name" release/artifacts
-
-        ls -l "$FILENAME"
-
-
-    # Optional: sanity-check that the PAT is present for PROD
     - name: Check PAT availability (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       shell: bash
       run: |
         set -euo pipefail
-        if [[ -z "${GITHUB_ACTIONS_BOT:-}" ]]; then
-          echo "ERROR: GITHUB_ACTIONS_BOT env var (PAT) not set. Refusing to attempt release." >&2
-          exit 1
-        fi
+        python "${GITHUB_ACTION_PATH}/scripts/check_pat.py"
 
     # ====================== PROD path (pushes to main) ======================
     - name: Configure AWS credentials (PROD)
@@ -100,22 +62,23 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        : "${VERSION:?missing}"; : "${PACKAGE:?missing}"; : "${FILENAME:?missing}"
+        python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_PROD }}"
 
-        ASSET_SHA256="$(sha256sum "$FILENAME" | awk '{print $1}')"
+    - name: Extract PR summary for release body (PROD)
+      id: release-body
+      shell: bash
+      run: |
+        set -euo pipefail
+        python "${GITHUB_ACTION_PATH}/scripts/extract_release_body_from_pr.py" --tag "${{ inputs.tag }}"
 
-        aws codeartifact publish-package-version \
-          --domain "${{ env.AWS_DOMAIN }}" \
-          --domain-owner "${{ env.AWS_DOMAIN_OWNER }}" \
-          --repository "${{ env.AWS_STM32_REPO_PROD }}" \
-          --format generic \
-          --namespace "$NAMESPACE" \
-          --package "$PACKAGE" \
-          --package-version "$VERSION" \
-          --asset-content "$FILENAME" \
-          --asset-name "$FILENAME" \
-          --asset-sha256 "$ASSET_SHA256"
-  
+    - name: Print release notes
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      shell: bash
+      run: |
+        echo "===== RELEASE NOTES BEGIN ====="
+        printf "%s\n" "${{ steps.release-body.outputs.body }}"
+        echo "===== RELEASE NOTES END ====="
+
     - name: Create/Update GitHub Release (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       uses: softprops/action-gh-release@v2
@@ -124,9 +87,9 @@ runs:
         name: ${{ env.PACKAGE }} ${{ env.VERSION }}
         draft: false
         prerelease: false
-        generate_release_notes: true
+        # We now fully control the body; no auto-generated notes.
+        body: ${{ steps.release-body.outputs.body }}
         files: ${{ env.FILENAME }}
-        # You can pass the PAT either via the 'token' input...
         token: ${{ env.GITHUB_ACTIONS_BOT }}
 
     # ================== DEV path (PRs and non-main pushes) ==================
@@ -143,18 +106,4 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        : "${VERSION:?missing}"; : "${PACKAGE:?missing}"; : "${FILENAME:?missing}"
-
-        ASSET_SHA256="$(sha256sum "$FILENAME" | awk '{print $1}')"
-
-        aws codeartifact publish-package-version \
-          --domain "${{ env.AWS_DOMAIN }}" \
-          --domain-owner "${{ env.AWS_DOMAIN_OWNER }}" \
-          --repository "${{ env.AWS_STM32_REPO_DEV }}" \
-          --format generic \
-          --namespace "$NAMESPACE" \
-          --package "$PACKAGE" \
-          --package-version "$VERSION" \
-          --asset-content "$FILENAME" \
-          --asset-name "$FILENAME" \
-          --asset-sha256 "$ASSET_SHA256"
+        python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_DEV }}"
