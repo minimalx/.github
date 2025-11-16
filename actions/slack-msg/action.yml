@@ -39,6 +39,10 @@ inputs:
     description: "Commitish for notes generation (defaults to current SHA)."
     required: false
     default: "${{ github.sha }}"
+  release_notes_text:
+    description: "Optional precomputed release notes (takes precedence over auto-generated notes)."
+    required: false
+    default: ""
 
   header_emoji:
     description: "Emoji prefix in the header line."
@@ -92,6 +96,7 @@ runs:
         TARGET_COMMITISH:    ${{ inputs.target_commitish }}
         MAX_NOTES_CHARS:     ${{ inputs.max_notes_chars }}
         NOTES_FALLBACK_TEXT: ${{ inputs.notes_fallback_text }}
+        RELEASE_NOTES_TEXT:  ${{ inputs.release_notes_text }}
 
     - name: Build Slack payload
       id: payload

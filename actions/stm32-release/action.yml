@@ -22,6 +22,11 @@ inputs:
     description: "Token for 'gh' to call releases/generate-notes (usually GITHUB_TOKEN)."
     required: true
 
+outputs:
+  release-notes:
+    description: "Release notes Markdown derived from the associated pull request."
+    value: ${{ steps.release-body.outputs.body }}
+
 runs:
   using: "composite"
   steps:
