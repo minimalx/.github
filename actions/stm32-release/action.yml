@@ -65,12 +65,13 @@ runs:
         python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_PROD }}"
 
     - name: Extract PR summary for release body (PROD)
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       id: release-body
       shell: bash
       run: |
         set -euo pipefail
         python "${GITHUB_ACTION_PATH}/scripts/extract_release_body_from_pr.py" --tag "${{ inputs.tag }}"
-
+        
     - name: Print release notes
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       shell: bash
