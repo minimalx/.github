@@ -10,13 +10,11 @@ from urllib.error import URLError, HTTPError
 
 
 SUMMARY_HEADING_REGEX = re.compile(r"(?im)^(#{1,6})\s*summary\s*$")
-CODERABBIT_TITLE_REGEX = re.compile(r"(?im)^summary by coderabbit\b")
 
 
 def github_api_get(url: str, token: str):
     headers = {
         "Authorization": f"Bearer {token}",
-        # Include the old groot preview just in case, plus normal v3 JSON
         "Accept": "application/vnd.github+json, application/vnd.github.groot-preview+json",
         "User-Agent": "stm32-release-action",
     }
@@ -57,27 +55,42 @@ def extract_summary_section(body: str) -> str | None:
     return section or None
 
 
+def is_coderabbit_title(line: str) -> bool:
+    """
+    Determine if a line looks like the 'Summary by CodeRabbit' title.
+
+    We:
+      - strip leading markdown cruft (#, *, >, spaces),
+      - lowercase,
+      - check if it starts with 'summary by coderabbit'.
+    """
+    stripped = re.sub(r"^[#>*\s]+", "", line).strip()
+    return stripped.lower().startswith("summary by coderabbit")
+
+
 def extract_coderabbit_summary_from_comment(body: str) -> str | None:
     """
-    Given a single PR comment body, return the useful part of a
-    'Summary by CodeRabbit' comment.
+    Given a single comment/review body, return the useful part of a
+    'Summary by CodeRabbit' block.
     """
     if not body:
         return None
 
-    lines = body.strip().splitlines()
+    lines = body.splitlines()
 
-    first_non_empty_idx = next((i for i, line in enumerate(lines) if line.strip()), None)
-    if first_non_empty_idx is None:
+    title_idx = None
+    for i, line in enumerate(lines):
+        if is_coderabbit_title(line):
+            title_idx = i
+            break
+
+    if title_idx is None:
         return None
 
-    if not CODERABBIT_TITLE_REGEX.match(lines[first_non_empty_idx].strip()):
-        return None
+    content_lines = lines[title_idx + 1 :]
 
-    content_lines = lines[first_non_empty_idx + 1 :]
-
-    # Skip Markdown separators like '---'
-    while content_lines and re.fullmatch(r"\s*-{3,}\s*|\s*_{3,}\s*", content_lines[0]):
+    # Skip Markdown separators like '---', '___', '***'
+    while content_lines and re.fullmatch(r"\s*(---+|___+|\*\s*\*\s*\*)\s*", content_lines[0]):
         content_lines = content_lines[1:]
 
     content = "\n".join(content_lines).strip()
@@ -86,25 +99,38 @@ def extract_coderabbit_summary_from_comment(body: str) -> str | None:
 
 def find_coderabbit_summary(repo: str, pr_number: int, token: str) -> str | None:
     """
-    Look through issue comments on the PR for a CodeRabbit summary comment.
-    Uses the *latest* matching comment.
+    Look through PR issue comments and reviews for a CodeRabbit summary.
+    Uses the latest matching block.
     """
-    url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-    comments = github_api_get(url, token)
-    if not isinstance(comments, list):
-        print("[extract-release-body] No issue comments found or API error.", file=sys.stderr)
-        return None
+    summaries: list[str] = []
 
-    summary_candidates: list[str] = []
-    for comment in comments:
-        body = comment.get("body") or ""
-        summary = extract_coderabbit_summary_from_comment(body)
-        if summary:
-            summary_candidates.append(summary)
+    # 1) Issue comments: /issues/{pr}/comments
+    url_comments = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+    comments = github_api_get(url_comments, token)
+    if isinstance(comments, list):
+        print(f"[extract-release-body] Found {len(comments)} issue comments.", file=sys.stderr)
+        for c in comments:
+            summary = extract_coderabbit_summary_from_comment(c.get("body") or "")
+            if summary:
+                summaries.append(summary)
+    else:
+        print("[extract-release-body] No issue comments or API error for issue comments.", file=sys.stderr)
 
-    if summary_candidates:
-        print("[extract-release-body] Found CodeRabbit summary comment.", file=sys.stderr)
-        return summary_candidates[-1]
+    # 2) PR reviews: /pulls/{pr}/reviews
+    url_reviews = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/reviews"
+    reviews = github_api_get(url_reviews, token)
+    if isinstance(reviews, list):
+        print(f"[extract-release-body] Found {len(reviews)} PR reviews.", file=sys.stderr)
+        for r in reviews:
+            summary = extract_coderabbit_summary_from_comment(r.get("body") or "")
+            if summary:
+                summaries.append(summary)
+    else:
+        print("[extract-release-body] No PR reviews or API error for reviews.", file=sys.stderr)
+
+    if summaries:
+        print("[extract-release-body] Found CodeRabbit summary.", file=sys.stderr)
+        return summaries[-1]
 
     print("[extract-release-body] No CodeRabbit summary comment found.", file=sys.stderr)
     return None
@@ -118,7 +144,6 @@ def find_pr_for_commit(repo: str, sha: str, token: str) -> dict | None:
       1. Use /commits/{sha}/pulls
       2. If that fails or is empty, scan recent PRs and match merge_commit_sha/head.sha
     """
-    # 1) Preferred: commit -> PRs
     url = f"https://api.github.com/repos/{repo}/commits/{sha}/pulls"
     prs = github_api_get(url, token)
     if isinstance(prs, list) and prs:
@@ -126,7 +151,6 @@ def find_pr_for_commit(repo: str, sha: str, token: str) -> dict | None:
         return prs[0]
     print(f"[extract-release-body] /commits/{sha}/pulls returned no PRs; trying fallback search.", file=sys.stderr)
 
-    # 2) Fallback: look at recent PRs and match by SHA
     url = f"https://api.github.com/repos/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
     prs = github_api_get(url, token)
     if not isinstance(prs, list):
@@ -165,7 +189,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Extract release body from the 'Summary' section of the PR body "
-            "or from a 'Summary by CodeRabbit' PR comment."
+            "or from a 'Summary by CodeRabbit' comment/review."
         )
     )
     parser.add_argument("--tag", required=True, help="Tag name for fallback text.")
@@ -205,7 +229,7 @@ def main(argv: list[str]) -> int:
     if summary:
         print("[extract-release-body] Found 'Summary' section in PR body.", file=sys.stderr)
 
-    # 2) If not found, try CodeRabbit comment
+    # 2) If not found, try CodeRabbit comment/review
     if not summary and pr_number is not None:
         summary = find_coderabbit_summary(repo, pr_number, token)
 
