@@ -51,7 +51,7 @@ inputs:
   max_notes_chars:
     description: "Max characters of notes to include (Block Kit plain_text limit ≈ 3000)."
     required: false
-    default: "2900"
+    default: "3000"
   notes_fallback_text:
     description: "Fallback text when auto-generated notes are empty."
     required: false
