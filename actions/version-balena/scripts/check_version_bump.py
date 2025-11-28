@@ -19,8 +19,16 @@ def run_git_show(commit: str, path: str, allow_missing: bool = False) -> Optiona
         return output
     except subprocess.CalledProcessError as e:
         msg = e.output.strip()
-        # Handle the case where the file does not yet exist in the base commit
-        if allow_missing and "does not exist" in msg:
+
+        # When the file doesn't exist in that commit, Git can say things like:
+        #   fatal: path 'balena.yml' exists on disk, but not in '...sha...'
+        # or:
+        #   fatal: Path 'balena.yml' does not exist in '...sha...'
+        if allow_missing and (
+            "exists on disk, but not in" in msg
+            or "does not exist in" in msg
+            or "pathspec" in msg  # extra safety for other variants
+        ):
             print(
                 f"Base version file '{path}' does not exist at {commit}. "
                 "Treating this as an initial version and skipping comparison."
