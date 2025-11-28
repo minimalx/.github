@@ -1,24 +1,47 @@
 name: "Check balena.yml version bump"
 description: "Ensures balena.yml version is bumped according to semantic versioning."
+
 inputs:
   base-sha:
-    description: "Base commit SHA to compare from"
     required: true
   head-sha:
-    description: "Head commit SHA to compare to"
     required: true
   file:
-    description: "Path to balena.yml"
     required: false
     default: "balena.yml"
+
+outputs:
+  tag:
+    description: "Generated tag TCU_STACK_v<version>"
+    value: ${{ steps.extract-version.outputs.tag }}
 
 runs:
   using: "composite"
   steps:
     - name: Run version bump check
+      id: version-check
       shell: bash
       run: |
-        python "${GITHUB_ACTION_PATH}/scripts/check_version_bump.py" \
+        OUTPUT=$(python scripts/check_version_bump.py \
           --base "${{ inputs.base-sha }}" \
           --head "${{ inputs.head-sha }}" \
-          --file "${{ inputs.file }}"
+          --file "${{ inputs.file }}")
+
+        echo "$OUTPUT"
+
+        # Extract version from Python script output
+        VERSION=$(echo "$OUTPUT" | awk -F= '/version_output=/ {print $2}')
+
+        if [ -z "$VERSION" ]; then
+          echo "::error::Failed to extract version from script output"
+          exit 1
+        fi
+
+        echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+    - name: Format tag output
+      id: extract-version
+      shell: bash
+      run: |
+        TAG="TCU_STACK_v${VERSION}"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
