@@ -18,10 +18,13 @@ outputs:
 runs:
   using: "composite"
   steps:
+
     - name: Run version bump check
       id: version-check
       shell: bash
       run: |
+        set -e
+
         OUTPUT=$(python "${GITHUB_ACTION_PATH}/scripts/check_version_bump.py" \
           --base "${{ inputs.base-sha }}" \
           --head "${{ inputs.head-sha }}" \
@@ -29,14 +32,15 @@ runs:
 
         echo "$OUTPUT"
 
-        # Extract version from Python script output
-        VERSION=$(echo "$OUTPUT" | awk -F= '/version_output=/ {print $2}')
+        # Extract version from Python script output (uppercase VERSION_OUTPUT)
+        VERSION=$(echo "$OUTPUT" | sed -n 's/^VERSION_OUTPUT=//p' | tail -n 1)
 
         if [ -z "$VERSION" ]; then
           echo "::error::Failed to extract version from script output"
           exit 1
         fi
 
+        # Export for next step
         echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
     - name: Format tag output

@@ -87,14 +87,17 @@ def main() -> None:
         sys.exit(1)
 
     head_version_str = extract_version_from_content(head_content)
+    # Validate semver for head
     head_ver = parse_semver(head_version_str)
 
-    # If base file doesn't exist, just validate semver and accept
+    # If base file doesn't exist, just validate semver (already done) and accept
     if base_content is None:
         print(
             f"No previous '{args.file}' found in base commit. "
             f"Treating '{head_version_str}' as initial version. Version bump check passed ✅"
         )
+        # Emit machine-readable line for the GitHub Action
+        print(f"VERSION_OUTPUT={head_version_str}")
         sys.exit(0)
 
     base_version_str = extract_version_from_content(base_content)
@@ -113,6 +116,9 @@ def main() -> None:
         sys.exit(1)
 
     print("Version bump check passed ✅")
+    # Emit machine-readable line for the GitHub Action
+    print(f"VERSION_OUTPUT={head_version_str}")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
