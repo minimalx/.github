@@ -22,7 +22,7 @@ runs:
       id: version-check
       shell: bash
       run: |
-        OUTPUT=$(python ""${GITHUB_ACTION_PATH}/scripts/check_version_bump.py" \
+        OUTPUT=$(python "${GITHUB_ACTION_PATH}/scripts/check_version_bump.py" \
           --base "${{ inputs.base-sha }}" \
           --head "${{ inputs.head-sha }}" \
           --file "${{ inputs.file }}")
