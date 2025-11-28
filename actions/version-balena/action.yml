@@ -1,0 +1,24 @@
+name: "Check balena.yml version bump"
+description: "Ensures balena.yml version is bumped according to semantic versioning."
+inputs:
+  base-sha:
+    description: "Base commit SHA to compare from"
+    required: true
+  head-sha:
+    description: "Head commit SHA to compare to"
+    required: true
+  file:
+    description: "Path to balena.yml"
+    required: false
+    default: "balena.yml"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run version bump check
+      shell: bash
+      run: |
+        python "${GITHUB_ACTION_PATH}/scripts/check_version_bump.py" \
+          --base "${{ inputs.base-sha }}" \
+          --head "${{ inputs.head-sha }}" \
+          --file "${{ inputs.file }}"
