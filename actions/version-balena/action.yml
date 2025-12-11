@@ -23,16 +23,25 @@ runs:
       id: version-check
       shell: bash
       run: |
-        set -e
-
+        # Temporarily disable 'exit on error' so we can capture the script's output
+        set +e
         OUTPUT=$(python "${GITHUB_ACTION_PATH}/scripts/check_version_bump.py" \
           --base "${{ inputs.base-sha }}" \
           --head "${{ inputs.head-sha }}" \
           --file "${{ inputs.file }}")
+        STATUS=$?
+        # Re-enable 'exit on error' for the rest of the script
+        set -e
 
+        # Always show the Python output in the logs
         echo "$OUTPUT"
 
-        # Extract version from Python script output (uppercase VERSION_OUTPUT)
+        # If the Python script failed, propagate its exit code and stop here
+        if [ "$STATUS" -ne 0 ]; then
+          exit "$STATUS"
+        fi
+
+        # Only reach here if Python exited 0 → safe to parse VERSION_OUTPUT
         VERSION=$(echo "$OUTPUT" | sed -n 's/^VERSION_OUTPUT=//p' | tail -n 1)
 
         if [ -z "$VERSION" ]; then
@@ -40,7 +49,6 @@ runs:
           exit 1
         fi
 
-        # Export for next step
         echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
     - name: Format tag output
