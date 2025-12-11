@@ -68,6 +68,18 @@ def compare_versions(old: Tuple[int, int, int], new: Tuple[int, int, int]) -> in
     return -1
 
 
+def print_bump_suggestions(base_ver: Tuple[int, int, int]) -> None:
+    major, minor, patch = base_ver
+    major_bump = f"{major + 1}.0.0"
+    minor_bump = f"{major}.{minor + 1}.0"
+    patch_bump = f"{major}.{minor}.{patch + 1}"
+
+    print("Update version in balena.yml. Possible new versions are:")
+    print(f"- MAJOR: {major_bump}")
+    print(f"- MINOR: {minor_bump}")
+    print(f"- PATCH: {patch_bump}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Check that balena.yml version has been bumped with semantic versioning."
@@ -110,9 +122,11 @@ def main() -> None:
 
     if cmp_result < 0:
         print("::error::Version in head is lower than version in base. Version must only increase.")
+        print_bump_suggestions(base_ver)
         sys.exit(1)
     elif cmp_result == 0:
         print("::error::Version has not been bumped. Please increment the version in balena.yml.")
+        print_bump_suggestions(base_ver)
         sys.exit(1)
 
     print("Version bump check passed ✅")
