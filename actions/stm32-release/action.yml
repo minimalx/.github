@@ -117,4 +117,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_DEV }}"
+        output=""
+        if ! output=$(python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_DEV }}" 2>&1); then
+          if printf '%s' "$output" | grep -q "Cannot update existing generic package version"; then
+            echo "Artifact already exists, skipping"
+            exit 0
+          fi
+          printf '%s\n' "$output" >&2
+          exit 1
+        fi
