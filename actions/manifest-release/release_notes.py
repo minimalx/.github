@@ -220,15 +220,13 @@ def main() -> int:
         new_desc = describe_commit(new_sha, remote_tags, exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING)
 
         print(f"{path}:")
-        print(f"  old: {old_desc}")
-        print(f"  new: {new_desc}")
+        print(f"  app: {old_desc} -> {new_desc}")
 
         bootloader_prefix = BOOTLOADER_TAG_PREFIXES.get(path)
         if bootloader_prefix:
             old_bl_desc = describe_commit(old_sha, remote_tags, prefix=bootloader_prefix)
             new_bl_desc = describe_commit(new_sha, remote_tags, prefix=bootloader_prefix)
-            print(f"  bootloader old: {old_bl_desc}")
-            print(f"  bootloader new: {new_bl_desc}")
+            print(f"  bootloader: {old_bl_desc} -> {new_bl_desc}")
         print()
 
     print("::endgroup::")
