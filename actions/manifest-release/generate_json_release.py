@@ -69,12 +69,18 @@ def load_ext_submodules(path: Path):
             continue
         name = item.get("name")
         version = item.get("version", "")
+        bootloader_version = item.get("bootloader_version")
         if not isinstance(name, str):
             print(f"Warning: submodule #{idx} in '{path}' has no valid 'name', skipping", file=sys.stderr)
             continue
         if not isinstance(version, str):
             version = str(version)
-        normalized.append({"name": name, "version": version})
+        entry = {"name": name, "version": version}
+        if bootloader_version is not None and not isinstance(bootloader_version, str):
+            bootloader_version = str(bootloader_version)
+        if bootloader_version:
+            entry["bootloader_version"] = bootloader_version
+        normalized.append(entry)
 
     return normalized
 
@@ -98,10 +104,14 @@ def main():
             if not line:
                 continue
 
-            parts = line.split(maxsplit=1)
+            parts = line.split(maxsplit=2)
             name = parts[0]
-            version = parts[1] if len(parts) == 2 else ""
-            submodules.append({"name": name, "version": version})
+            version = parts[1] if len(parts) >= 2 else ""
+            bootloader_version = parts[2] if len(parts) >= 3 else ""
+            entry = {"name": name, "version": version}
+            if bootloader_version:
+                entry["bootloader_version"] = bootloader_version
+            submodules.append(entry)
 
     # Append external JSON submodules if provided
     if args.ext_versions:
