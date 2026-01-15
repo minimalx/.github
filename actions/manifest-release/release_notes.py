@@ -4,13 +4,21 @@ Print release notes comparing submodule tags between a base commit and HEAD.
 
 For each submodule (except workflow-templates), this reports the tag pointing
 to the submodule commit at the base commit and the tag pointing to the current
-submodule commit. Tags containing "_BL_" are ignored to match existing logic.
+submodule commit. Tags containing "_BL_" are ignored for the main entry, and
+bootloader tags are reported separately for selected submodules.
 """
 
 import os
 import subprocess
 import sys
 from typing import Dict, List, Optional
+
+BOOTLOADER_TAG_PREFIXES = {
+    "body-control-unit": "BCU_BL_v",
+    "avas": "AVAS_BL_v",
+    "security-module": "SM_BL_v",
+}
+BOOTLOADER_EXCLUDE_SUBSTRING = "_BL_"
 
 
 def run_git(args, check: bool = True) -> str:
@@ -58,13 +66,34 @@ def get_gitlink_sha(treeish: str, path: str) -> Optional[str]:
     return parts[2]
 
 
-def get_tags_for_commit(commit: str) -> List[str]:
-    """Return tags pointing at the given commit, filtering out bootloader tags."""
+def filter_tags(
+    tags: List[str],
+    prefix: Optional[str] = None,
+    exclude_substring: Optional[str] = None,
+) -> List[str]:
+    """Filter tag names by prefix and/or substring exclusion."""
+    filtered: List[str] = []
+    for tag in tags:
+        if prefix and not tag.startswith(prefix):
+            continue
+        if exclude_substring and exclude_substring in tag:
+            continue
+        filtered.append(tag)
+    return filtered
+
+
+def get_tags_for_commit(
+    commit: str,
+    prefix: Optional[str] = None,
+    exclude_substring: Optional[str] = None,
+) -> List[str]:
+    """Return tags pointing at the given commit, with optional filtering."""
     try:
         tags_raw = run_git(["tag", "--points-at", commit])
     except subprocess.CalledProcessError:
         return []
-    return [t for t in tags_raw.splitlines() if t and "_BL_" not in t]
+    tags = [t for t in tags_raw.splitlines() if t]
+    return filter_tags(tags, prefix=prefix, exclude_substring=exclude_substring)
 
 
 def normalize_remote_url(url: str, token: Optional[str]) -> str:
@@ -109,27 +138,35 @@ def get_remote_tags(path: str, token: Optional[str]) -> Dict[str, List[str]]:
             tag_name = ref[len("refs/tags/") : -3]
         else:
             tag_name = ref[len("refs/tags/") :]
-        if "_BL_" in tag_name:
-            continue
         tags.setdefault(sha, []).append(tag_name)
     return tags
 
 
-def describe_commit(commit: Optional[str], remote_tags: Dict[str, List[str]]) -> str:
+def describe_commit(
+    commit: Optional[str],
+    remote_tags: Dict[str, List[str]],
+    prefix: Optional[str] = None,
+    exclude_substring: Optional[str] = None,
+) -> str:
     """Return a tag description for the commit or a fallback string."""
     if not commit:
         return "(missing)"
 
-    tags = get_tags_for_commit(commit)
+    tags = get_tags_for_commit(commit, prefix=prefix, exclude_substring=exclude_substring)
     if tags:
         return tags[0]
 
-    remote = remote_tags.get(commit, [])
+    remote = filter_tags(remote_tags.get(commit, []), prefix=prefix, exclude_substring=exclude_substring)
     if remote:
         return remote[0]
 
     try:
-        nearest = run_git(["describe", "--tags", "--abbrev=8", commit], check=False)
+        describe_args = ["describe", "--tags", "--abbrev=8"]
+        if prefix:
+            describe_args.extend(["--match", f"{prefix}*"])
+        elif exclude_substring:
+            describe_args.extend(["--exclude", f"*{exclude_substring}*"])
+        nearest = run_git(describe_args + [commit], check=False)
     except subprocess.CalledProcessError:
         nearest = ""
     nearest = nearest.strip()
@@ -179,12 +216,19 @@ def main() -> int:
         except subprocess.CalledProcessError:
             new_sha = None
 
-        old_desc = describe_commit(old_sha, remote_tags)
-        new_desc = describe_commit(new_sha, remote_tags)
+        old_desc = describe_commit(old_sha, remote_tags, exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING)
+        new_desc = describe_commit(new_sha, remote_tags, exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING)
 
         print(f"{path}:")
         print(f"  old: {old_desc}")
         print(f"  new: {new_desc}")
+
+        bootloader_prefix = BOOTLOADER_TAG_PREFIXES.get(path)
+        if bootloader_prefix:
+            old_bl_desc = describe_commit(old_sha, remote_tags, prefix=bootloader_prefix)
+            new_bl_desc = describe_commit(new_sha, remote_tags, prefix=bootloader_prefix)
+            print(f"  bootloader old: {old_bl_desc}")
+            print(f"  bootloader new: {new_bl_desc}")
         print()
 
     print("::endgroup::")
