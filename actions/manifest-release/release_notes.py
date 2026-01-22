@@ -8,6 +8,7 @@ submodule commit. Tags containing "_BL_" are ignored for the main entry, and
 bootloader tags are reported separately for selected submodules.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -19,6 +20,7 @@ BOOTLOADER_TAG_PREFIXES = {
     "security-module": "SM_BL_v",
 }
 BOOTLOADER_EXCLUDE_SUBSTRING = "_BL_"
+DEFAULT_EXT_VERSIONS_FILE = "mando_manifest.json"
 
 
 def run_git(args, check: bool = True) -> str:
@@ -162,6 +164,107 @@ def find_nearest_remote_tag(
     return None
 
 
+def load_ext_submodules_from_text(text: str, source: str) -> List[Dict[str, str]]:
+    """Parse external submodule JSON with {submodules:[{name,version,...}]}."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        print(f"Warning: invalid JSON in external versions file '{source}': {exc}", file=sys.stderr)
+        return []
+
+    if not isinstance(data, dict):
+        print(f"Warning: external versions file '{source}' must contain a JSON object", file=sys.stderr)
+        return []
+
+    submodules = data.get("submodules", [])
+    if not isinstance(submodules, list):
+        print(f"Warning: 'submodules' in '{source}' must be a list", file=sys.stderr)
+        return []
+
+    normalized: List[Dict[str, str]] = []
+    for idx, item in enumerate(submodules):
+        if not isinstance(item, dict):
+            print(f"Warning: submodule #{idx} in '{source}' is not an object, skipping", file=sys.stderr)
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            print(f"Warning: submodule #{idx} in '{source}' has no valid 'name', skipping", file=sys.stderr)
+            continue
+        version = item.get("version", "")
+        if not isinstance(version, str):
+            version = str(version)
+        bootloader_version = item.get("bootloader_version")
+        if bootloader_version is not None and not isinstance(bootloader_version, str):
+            bootloader_version = str(bootloader_version)
+        entry: Dict[str, str] = {"name": name, "version": version}
+        if bootloader_version:
+            entry["bootloader_version"] = bootloader_version
+        normalized.append(entry)
+    return normalized
+
+
+def load_ext_submodules_from_file(path: str) -> List[Dict[str, str]]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return load_ext_submodules_from_text(handle.read(), path)
+    except OSError:
+        return []
+
+
+def load_ext_submodules_from_treeish(treeish: str, path: str) -> List[Dict[str, str]]:
+    if not treeish:
+        return []
+    raw = run_git(["show", f"{treeish}:{path}"], check=False)
+    if not raw:
+        return []
+    return load_ext_submodules_from_text(raw, f"{treeish}:{path}")
+
+
+def format_external_value(value: Optional[str]) -> str:
+    if value is None or str(value).strip() == "":
+        return "(missing)"
+    return str(value)
+
+
+def report_external_versions(base_sha: str, path: str) -> None:
+    """Print release notes for external versions JSON (if present)."""
+    old_entries = load_ext_submodules_from_treeish(base_sha, path)
+    new_entries = load_ext_submodules_from_file(path)
+    if not old_entries and not new_entries:
+        return
+
+    old_map = {entry["name"]: entry for entry in old_entries}
+    new_map = {entry["name"]: entry for entry in new_entries}
+
+    names: List[str] = []
+    for entry in new_entries:
+        name = entry["name"]
+        if name not in names:
+            names.append(name)
+    for entry in old_entries:
+        name = entry["name"]
+        if name not in names:
+            names.append(name)
+
+    print(f"{path}:")
+    print()
+    for name in names:
+        old_entry = old_map.get(name, {})
+        new_entry = new_map.get(name, {})
+        old_version = format_external_value(old_entry.get("version"))
+        new_version = format_external_value(new_entry.get("version"))
+        print(f"{name}:")
+        print(f"  app: {old_version} -> {new_version}")
+
+        old_bl = old_entry.get("bootloader_version") if "bootloader_version" in old_entry else None
+        new_bl = new_entry.get("bootloader_version") if "bootloader_version" in new_entry else None
+        if old_bl is not None or new_bl is not None:
+            print(
+                f"  bootloader: {format_external_value(old_bl)} -> {format_external_value(new_bl)}"
+            )
+        print()
+
+
 def describe_commit(
     commit: Optional[str],
     repo_path: str,
@@ -265,6 +368,10 @@ def main() -> int:
             new_bl_desc = describe_commit(new_sha, path, remote_tags, prefix=bootloader_prefix)
             print(f"  bootloader: {old_bl_desc} -> {new_bl_desc}")
         print()
+
+    ext_path = os.environ.get("EXT_VERSIONS_FILE", DEFAULT_EXT_VERSIONS_FILE).strip()
+    if ext_path:
+        report_external_versions(base_sha, ext_path)
 
     print("::endgroup::")
     return 0
