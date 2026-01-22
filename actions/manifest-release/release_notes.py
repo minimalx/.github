@@ -21,6 +21,8 @@ BOOTLOADER_TAG_PREFIXES = {
 }
 BOOTLOADER_EXCLUDE_SUBSTRING = "_BL_"
 DEFAULT_EXT_VERSIONS_FILE = "mando_manifest.json"
+CHANGE_MARK = "\u203c\ufe0f"
+SAME_MARK = "\U0001F4A4"
 
 
 def run_git(args, check: bool = True) -> str:
@@ -226,6 +228,12 @@ def format_external_value(value: Optional[str]) -> str:
     return str(value)
 
 
+def change_marker(old_value: str, new_value: str) -> str:
+    if old_value == new_value:
+        return SAME_MARK
+    return CHANGE_MARK
+
+
 def report_external_versions(base_sha: str, path: str) -> None:
     """Print release notes for external versions JSON (if present)."""
     old_entries = load_ext_submodules_from_treeish(base_sha, path)
@@ -254,13 +262,16 @@ def report_external_versions(base_sha: str, path: str) -> None:
         old_version = format_external_value(old_entry.get("version"))
         new_version = format_external_value(new_entry.get("version"))
         print(f"{name}:")
-        print(f"  app: {old_version} -> {new_version}")
+        print(f"  app: {old_version} -> {new_version} {change_marker(old_version, new_version)}")
 
         old_bl = old_entry.get("bootloader_version") if "bootloader_version" in old_entry else None
         new_bl = new_entry.get("bootloader_version") if "bootloader_version" in new_entry else None
         if old_bl is not None or new_bl is not None:
+            old_bl_value = format_external_value(old_bl)
+            new_bl_value = format_external_value(new_bl)
             print(
-                f"  bootloader: {format_external_value(old_bl)} -> {format_external_value(new_bl)}"
+                f"  bootloader: {old_bl_value} -> {new_bl_value} "
+                f"{change_marker(old_bl_value, new_bl_value)}"
             )
         print()
 
@@ -360,13 +371,16 @@ def main() -> int:
         )
 
         print(f"{path}:")
-        print(f"  app: {old_desc} -> {new_desc}")
+        print(f"  app: {old_desc} -> {new_desc} {change_marker(old_desc, new_desc)}")
 
         bootloader_prefix = BOOTLOADER_TAG_PREFIXES.get(path)
         if bootloader_prefix:
             old_bl_desc = describe_commit(old_sha, path, remote_tags, prefix=bootloader_prefix)
             new_bl_desc = describe_commit(new_sha, path, remote_tags, prefix=bootloader_prefix)
-            print(f"  bootloader: {old_bl_desc} -> {new_bl_desc}")
+            print(
+                f"  bootloader: {old_bl_desc} -> {new_bl_desc} "
+                f"{change_marker(old_bl_desc, new_bl_desc)}"
+            )
         print()
 
     ext_path = os.environ.get("EXT_VERSIONS_FILE", DEFAULT_EXT_VERSIONS_FILE).strip()
