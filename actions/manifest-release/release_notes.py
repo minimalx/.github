@@ -84,12 +84,13 @@ def filter_tags(
 
 def get_tags_for_commit(
     commit: str,
+    repo_path: str,
     prefix: Optional[str] = None,
     exclude_substring: Optional[str] = None,
 ) -> List[str]:
     """Return tags pointing at the given commit, with optional filtering."""
     try:
-        tags_raw = run_git(["tag", "--points-at", commit])
+        tags_raw = run_git(["-C", repo_path, "tag", "--points-at", commit])
     except subprocess.CalledProcessError:
         return []
     tags = [t for t in tags_raw.splitlines() if t]
@@ -142,8 +143,28 @@ def get_remote_tags(path: str, token: Optional[str]) -> Dict[str, List[str]]:
     return tags
 
 
+def find_nearest_remote_tag(
+    commit: str,
+    repo_path: str,
+    remote_tags: Dict[str, List[str]],
+    prefix: Optional[str] = None,
+    exclude_substring: Optional[str] = None,
+) -> Optional[str]:
+    """Find the nearest matching tag in history using remote tag metadata."""
+    history = run_git(["-C", repo_path, "rev-list", commit], check=False).strip()
+    if not history:
+        return None
+
+    for sha in history.splitlines():
+        tags = filter_tags(remote_tags.get(sha, []), prefix=prefix, exclude_substring=exclude_substring)
+        if tags:
+            return tags[0]
+    return None
+
+
 def describe_commit(
     commit: Optional[str],
+    repo_path: str,
     remote_tags: Dict[str, List[str]],
     prefix: Optional[str] = None,
     exclude_substring: Optional[str] = None,
@@ -152,7 +173,7 @@ def describe_commit(
     if not commit:
         return "(missing)"
 
-    tags = get_tags_for_commit(commit, prefix=prefix, exclude_substring=exclude_substring)
+    tags = get_tags_for_commit(commit, repo_path, prefix=prefix, exclude_substring=exclude_substring)
     if tags:
         return tags[0]
 
@@ -160,21 +181,27 @@ def describe_commit(
     if remote:
         return remote[0]
 
-    try:
-        describe_args = ["describe", "--tags", "--abbrev=8"]
-        if prefix:
-            describe_args.extend(["--match", f"{prefix}*"])
-        elif exclude_substring:
-            describe_args.extend(["--exclude", f"*{exclude_substring}*"])
-        nearest = run_git(describe_args + [commit], check=False)
-    except subprocess.CalledProcessError:
-        nearest = ""
-    nearest = nearest.strip()
+    describe_args = ["-C", repo_path, "describe", "--tags", "--abbrev=0"]
+    if prefix:
+        describe_args.extend(["--match", f"{prefix}*"])
+    elif exclude_substring:
+        describe_args.extend(["--exclude", f"*{exclude_substring}*"])
+    nearest = run_git(describe_args + [commit], check=False).strip()
     if nearest:
         return nearest
 
+    remote_nearest = find_nearest_remote_tag(
+        commit,
+        repo_path,
+        remote_tags,
+        prefix=prefix,
+        exclude_substring=exclude_substring,
+    )
+    if remote_nearest:
+        return remote_nearest
+
     try:
-        short_sha = run_git(["rev-parse", "--short", commit])
+        short_sha = run_git(["-C", repo_path, "rev-parse", "--short", commit])
     except subprocess.CalledProcessError:
         short_sha = commit[:7]
     return f"(no tag @ {short_sha})"
@@ -216,16 +243,26 @@ def main() -> int:
         except subprocess.CalledProcessError:
             new_sha = None
 
-        old_desc = describe_commit(old_sha, remote_tags, exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING)
-        new_desc = describe_commit(new_sha, remote_tags, exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING)
+        old_desc = describe_commit(
+            old_sha,
+            path,
+            remote_tags,
+            exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING,
+        )
+        new_desc = describe_commit(
+            new_sha,
+            path,
+            remote_tags,
+            exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING,
+        )
 
         print(f"{path}:")
         print(f"  app: {old_desc} -> {new_desc}")
 
         bootloader_prefix = BOOTLOADER_TAG_PREFIXES.get(path)
         if bootloader_prefix:
-            old_bl_desc = describe_commit(old_sha, remote_tags, prefix=bootloader_prefix)
-            new_bl_desc = describe_commit(new_sha, remote_tags, prefix=bootloader_prefix)
+            old_bl_desc = describe_commit(old_sha, path, remote_tags, prefix=bootloader_prefix)
+            new_bl_desc = describe_commit(new_sha, path, remote_tags, prefix=bootloader_prefix)
             print(f"  bootloader: {old_bl_desc} -> {new_bl_desc}")
         print()
 
