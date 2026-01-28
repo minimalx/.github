@@ -68,3 +68,4 @@ runs:
           ${{ inputs.project-path }}/${{ steps.derive-build-config.outputs.build_configuration }}/*.elf
           ${{ inputs.project-path }}/${{ steps.derive-build-config.outputs.build_configuration }}/*.bin
           ${{ inputs.project-path }}/${{ steps.derive-build-config.outputs.build_configuration }}/*.hex
+          ${{ inputs.project-path }}/compile_commands.json
