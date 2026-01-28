@@ -1,0 +1,69 @@
+name: "Static Analysis (MISRA/cppcheck)"
+description: "Run cppcheck MISRA static analysis on modified C/H files"
+
+inputs:
+  base-ref:
+    description: "Base ref to diff against (defaults to main if empty)"
+    required: false
+    default: "main"
+  project-path:
+    description: "Path to the project (e.g., main-app or bootloader)"
+    required: true
+  container-project-path:
+    description: "Path to the project inside the container (e.g., /workspace/main-app)"
+    required: true
+  max-configs:
+    description: "Maximum configurations for cppcheck (default 100)"
+    required: false
+    default: "100"
+  show-misra-style:
+    description: "Show MISRA style warnings (0 or 1)"
+    required: false
+    default: "0"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build cppcheck Docker image
+      shell: bash
+      run: |
+        DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -t stm32cubeide-local .
+
+    - name: Run Static Analysis on modified files
+      shell: bash
+      env:
+        CPP_MAX_CONFIGS: ${{ inputs.max-configs }}
+        CPP_SHOW_MISRA_STYLE: ${{ inputs.show-misra-style }}
+      run: |
+        set -euo pipefail
+
+        BASE_REF="${{ inputs.base-ref }}"
+        PROJECT_PATH="${{ inputs.project-path }}"
+        CONTAINER_PROJECT_PATH="${{ inputs.container-project-path }}"
+
+        # Get list of modified .c/.h files in project compared to base branch
+        CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}"...HEAD -- \
+          "${PROJECT_PATH}/Core/Src/*.c" \
+          "${PROJECT_PATH}/Core/Inc/*.h" \
+          "${PROJECT_PATH}/Core/Src/**/*.c" \
+          "${PROJECT_PATH}/Core/Inc/**/*.h" \
+          2>/dev/null || echo "")
+
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No modified ${PROJECT_PATH} source files to analyze."
+          exit 0
+        fi
+
+        echo "Analyzing modified files:"
+        echo "$CHANGED_FILES"
+
+        FAILED=0
+        for file in $CHANGED_FILES; do
+          if [ -f "$file" ]; then
+            echo "::group::Analyzing $file"
+            ./.cppcheck/check_file.sh "$PWD" "$file" "${CONTAINER_PROJECT_PATH}" || FAILED=1
+            echo "::endgroup::"
+          fi
+        done
+
+        exit $FAILED
