@@ -3,7 +3,7 @@ FROM xanderhendriks/stm32cubeide:15.0
 
 # Tools your script needs
 RUN apt-get -y update && \
-    apt-get -y install curl python3 python3-pycryptodome python3-ecdsa python3-pyelftools python3-numpy git srecord ca-certificates \
+    apt-get -y install curl python3 python3-pycryptodome python3-ecdsa python3-pyelftools python3-numpy git srecord ca-certificates bear cppcheck jq \
     && ln -s $(which python3) /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
