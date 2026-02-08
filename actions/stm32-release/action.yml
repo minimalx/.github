@@ -21,6 +21,10 @@ inputs:
   github_token:
     description: "Token for 'gh' to call releases/generate-notes (usually GITHUB_TOKEN)."
     required: true
+  release-name:
+    description: "Override GitHub release name base (defaults to package-name)."
+    required: false
+    default: ""
 
 outputs:
   release-notes:
@@ -30,6 +34,12 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Prepare release workspace
+      shell: bash
+      run: |
+        set -euo pipefail
+        rm -rf release
+
     - name: Download firmware artifacts
       uses: actions/download-artifact@v4
       with:
@@ -42,6 +52,16 @@ runs:
       run: |
         set -euo pipefail
         python "${GITHUB_ACTION_PATH}/scripts/derive_metadata.py" "${{ inputs.tag }}" "${{ inputs['package-name'] }}" "${{ inputs.namespace }}"
+
+    - name: Derive release name
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${{ inputs.release-name }}" ]; then
+          echo "RELEASE_NAME=${{ inputs.release-name }} ${{ env.VERSION }}" >> "$GITHUB_ENV"
+        else
+          echo "RELEASE_NAME=${{ env.PACKAGE }} ${{ env.VERSION }}" >> "$GITHUB_ENV"
+        fi
 
     - name: Create firmware bundle (.zip)
       shell: bash
@@ -95,7 +115,7 @@ runs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ inputs.tag }}
-        name: ${{ env.PACKAGE }} ${{ env.VERSION }}
+        name: ${{ env.RELEASE_NAME }}
         draft: false
         prerelease: false
         # We now fully control the body; no auto-generated notes.
