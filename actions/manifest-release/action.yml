@@ -10,6 +10,22 @@ inputs:
   ext-versions:
     description: "File containing additonal firmware releases not covered by submodules"
     required: false
+  firmware-upgrade-layout:
+    description: "Optional layout spec for generating the ordered firmware-upgrade manifest"
+    required: false
+    default: ""
+  firmware-upgrade-output-file:
+    description: "Optional output JSON file for the ordered firmware-upgrade manifest"
+    required: false
+    default: ""
+  firmware-upgrade-version:
+    description: "Release version used in the ordered firmware-upgrade manifest"
+    required: false
+    default: ""
+  firmware-upgrade-artifact-name:
+    description: "Artifact name for the ordered firmware-upgrade manifest"
+    required: false
+    default: "firmware-upgrade-manifest"
 
 runs:
   using: "composite"
@@ -22,6 +38,16 @@ runs:
       shell: bash
       run: python3 "${GITHUB_ACTION_PATH}/generate_json_release.py" -o "${{ inputs.output-file }}" -e "${{ inputs.ext-versions}}"
 
+    - name: Generate ordered firmware-upgrade manifest
+      if: ${{ inputs.firmware-upgrade-layout != '' && inputs.firmware-upgrade-output-file != '' }}
+      shell: bash
+      run: |
+        python3 "${GITHUB_ACTION_PATH}/generate_firmware_upgrade_manifest.py" \
+          --layout-file "${{ inputs.firmware-upgrade-layout }}" \
+          --version "${{ inputs.firmware-upgrade-version }}" \
+          --ext-versions "${{ inputs.ext-versions }}" \
+          --output "${{ inputs.firmware-upgrade-output-file }}"
+
     - name: Upload submodule_versions.txt artifact
       uses: actions/upload-artifact@v4
       with:
@@ -33,3 +59,10 @@ runs:
       with:
         name: release-json
         path: ${{ inputs.output-file }}
+
+    - name: Upload ordered firmware-upgrade manifest artifact
+      if: ${{ inputs.firmware-upgrade-layout != '' && inputs.firmware-upgrade-output-file != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.firmware-upgrade-artifact-name }}
+        path: ${{ inputs.firmware-upgrade-output-file }}
