@@ -7,6 +7,7 @@ BOOTLOADER_TAG_PREFIXES = {
     "body-control-unit": "BCU_BL_v",
     "avas": "AVAS_BL_v",
     "security-module": "SM_BL_v",
+    "pmu": "PMU_BL_v",
 }
 BOOTLOADER_TAG_SUBSTRING = "_BL_"
 SEMVER_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")

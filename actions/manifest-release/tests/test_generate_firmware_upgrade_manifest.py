@@ -10,13 +10,30 @@ SCRIPT = (
     ROOT
     / "workflow-templates/actions/manifest-release/generate_firmware_upgrade_manifest.py"
 )
-LAYOUT = ROOT / "manifest-layouts/p4-1.x-firmware-upgrade.json"
 
+
+def _discover_layout() -> Path:
+    layouts_dir = ROOT / "manifest-layouts"
+    candidates = sorted(layouts_dir.glob("*-firmware-upgrade.json"))
+    if not candidates:
+        raise FileNotFoundError(f"No firmware-upgrade layout found in {layouts_dir}")
+    return candidates[0]
+
+
+LAYOUT = _discover_layout()
+
+# Detect which boards the discovered layout expects so the test data can match.
+_LAYOUT_DATA = json.loads(LAYOUT.read_text(encoding="utf-8"))
+_LAYOUT_BOARDS = [b["board"] for b in _LAYOUT_DATA["boardSequence"]]
+_LAYOUT_VEHICLE_TYPE = _LAYOUT_DATA["vehicleType"]
+
+# Build submodule versions that satisfy every source in the layout.
 SUBMODULE_VERSIONS = """\
 body-control-unit 4.0.0 2.1.1
 security-module 3.2.1 3.1.4
 tcu-stack 1.5.2
 avas 2.4.1 2.0.3
+pmu 1.0.0 0.5.0
 """
 
 
@@ -79,10 +96,7 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
 
         self.assertIsNotNone(output_text)
         data = json.loads(output_text)
-        self.assertEqual(
-            list(data["boards"].keys()),
-            ["AVA", "SMM", "SML", "SMB", "BCU", "TCU"],
-        )
+        self.assertEqual(list(data["boards"].keys()), _LAYOUT_BOARDS)
         self.assertEqual(list(data["boards"]["AVA"].keys()), ["app", "boot"])
         self.assertEqual(list(data["boards"]["TCU"].keys()), ["app", "boot"])
         self.assertEqual(data["boards"]["AVA"]["app"], "2.4.1")
@@ -93,6 +107,9 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
         self.assertEqual(data["boards"]["BCU"]["boot"], "2.1.1")
         self.assertEqual(data["boards"]["TCU"]["app"], "1.5.2")
         self.assertIsNone(data["boards"]["TCU"]["boot"])
+        if "PMU" in _LAYOUT_BOARDS:
+            self.assertEqual(data["boards"]["PMU"]["app"], "1.0.0")
+            self.assertEqual(data["boards"]["PMU"]["boot"], "0.5.0")
 
     def test_cli_uses_version_in_filename_and_manifest_version(self):
         result, output_text, output_name = self.run_script(
@@ -107,7 +124,7 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
         self.assertIsNotNone(output_text)
         data = json.loads(output_text)
         self.assertEqual(data["manifestVersion"], "v1.3.7")
-        self.assertEqual(data["vehicleType"], "P4-1.X")
+        self.assertEqual(data["vehicleType"], _LAYOUT_VEHICLE_TYPE)
         self.assertEqual(data["operation"], "firmware-upgrade")
 
     def test_cli_fails_when_required_boot_version_is_missing(self):
@@ -117,6 +134,7 @@ body-control-unit 4.0.0 2.1.1
 security-module 3.2.1
 tcu-stack 1.5.2
 avas 2.4.1 2.0.3
+pmu 1.0.0 0.5.0
 """
         )
 
