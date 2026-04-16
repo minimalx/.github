@@ -109,8 +109,15 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
                 capture_output=True,
             )
 
-    def test_render_builds_expected_path_style_template_request(self):
-        result, output_text = self.run_render(document_source_style="path")
+    def test_render_builds_expected_inline_template_request(self):
+        manifest = {
+            "operation": "firmware-upgrade",
+            "manifestVersion": "v1.3.1",
+            "vehicleType": "P4-2.X",
+            "boards": {"BCU": {"app": "1.0.0", "boot": "1.0.1"}},
+        }
+
+        result, output_text = self.run_render(inline_document_body=manifest)
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIsNotNone(output_text)
@@ -119,9 +126,10 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
         self.assertEqual(data["jobTemplateId"], "p4_1_x_fw_upgrade_v1_3_1")
         self.assertEqual(data["description"], "P4-1.X firmware-upgrade manifest v1.3.1")
         self.assertEqual(
-            data["documentSource"],
-            "https://s3.eu-central-1.amazonaws.com/vehicle-iot-manifest-update-dev-303188940251/firmware-upgrade/p4-1.x/1.3.1.json",
+            data["document"],
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True),
         )
+        self.assertNotIn("documentSource", data)
         self.assertEqual(
             data["presignedUrlConfig"]["roleArn"],
             "arn:aws:iam::303188940251:role/iot-jobs-firmware-manifest-read-role",
@@ -144,7 +152,7 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
             ],
         )
 
-    def test_render_supports_virtual_hosted_document_source(self):
+    def test_render_supports_legacy_document_source_requests(self):
         result, output_text = self.run_render()
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
@@ -158,32 +166,13 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
     def test_render_sanitizes_dev_versions_for_template_id(self):
         result, output_text = self.run_render(
             version="1.3.1-dev1",
-            document_source_style="path",
+            inline_document_body={"operation": "firmware-upgrade"},
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIsNotNone(output_text)
         data = json.loads(output_text)
         self.assertEqual(data["jobTemplateId"], "p4_1_x_fw_upgrade_v1_3_1_dev1")
-        self.assertEqual(
-            data["documentSource"],
-            "https://s3.eu-central-1.amazonaws.com/vehicle-iot-manifest-update-dev-303188940251/firmware-upgrade/p4-1.x/1.3.1-dev1.json",
-        )
-
-    def test_render_embeds_inline_document_from_file(self):
-        manifest = {
-            "operation": "firmware-upgrade",
-            "manifestVersion": "v1.3.1",
-            "vehicleType": "P4-2.X",
-            "boards": {"BCU": {"app": "1.0.0", "boot": "1.0.1"}},
-        }
-
-        result, output_text = self.run_render(inline_document_body=manifest)
-
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIsNotNone(output_text)
-        data = json.loads(output_text)
-        self.assertEqual(data["document"], json.dumps(manifest, separators=(",", ":"), sort_keys=True))
         self.assertNotIn("documentSource", data)
 
     def test_render_fails_on_invalid_timeout(self):
