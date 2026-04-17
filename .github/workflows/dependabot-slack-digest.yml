@@ -1,0 +1,25 @@
+name: Dependabot vulnerability digest → Slack
+
+on:
+  schedule:
+    # Monday 10:00 UTC weekly digest
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Post Dependabot digest to Slack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Notify vulnerabilities
+        # Pinned to a release tag; check https://github.com/kunalnagarco/action-cve/releases for updates.
+        uses: kunalnagarco/action-cve@v1.17.0
+        with:
+          token: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
+          slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
+          org: minimalx
+          count: 50
