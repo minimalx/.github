@@ -68,30 +68,31 @@ jobs:
           fi
 
           severity_order='{"critical":0,"high":1,"medium":2,"low":3}'
+          severity_emoji='{"critical":"🚨","high":"⚠️","medium":"🟠","low":"🔵"}'
 
-          summary=$(jq -r --argjson order "$severity_order" '
+          summary=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
             group_by(.security_advisory.severity)
             | map({ sev: .[0].security_advisory.severity, count: length })
             | sort_by($order[.sev])
-            | map("*\(.sev | ascii_upcase)*: \(.count)")
+            | map("\($emoji[.sev] // "⚪") *\(.sev | ascii_upcase)*: \(.count)")
             | join("  ·  ")
           ' alerts.json)
 
-          by_repo=$(jq -r --argjson order "$severity_order" '
+          by_repo=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
             group_by(.repository.name)
             | map({ repo: .[0].repository.name, count: length,
                     worst: (map(.security_advisory.severity) | sort_by($order[.]) | .[0]) })
             | sort_by($order[.worst], -.count)
             | .[0:10]
-            | map("• `\(.repo)` — \(.count) (worst: \(.worst))")
+            | map("• `\(.repo)` — \(.count) (worst: \($emoji[.worst] // "⚪") \(.worst))")
             | join("\n")
           ' alerts.json)
 
-          top=$(jq -r --argjson order "$severity_order" --argjson n "$TOP_N" '
+          top=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" --argjson n "$TOP_N" '
             sort_by($order[.security_advisory.severity])
             | .[0:$n]
             | map(
-                "• *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` " +
+                "\($emoji[.security_advisory.severity] // "⚪") *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` " +
                 "(\(.dependency.package.ecosystem)) in `\(.repository.name)` — " +
                 "<\(.html_url)|\(.security_advisory.summary | .[0:90])\(if (.security_advisory.summary | length) > 90 then "…" else "" end)>"
               )
