@@ -27,13 +27,18 @@ jobs:
           all='[]'
           page=1
           while :; do
-            resp=$(curl -sS \
+            status=$(curl -sS -o resp.json -w "%{http_code}" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/orgs/${ORG}/dependabot/alerts?state=open&per_page=100&page=${page}")
-            got=$(echo "$resp" | jq 'length')
-            all=$(jq -s '.[0] + .[1]' <(echo "$all") <(echo "$resp"))
+            if [ "$status" != "200" ]; then
+              echo "GitHub API returned HTTP $status on page $page:" >&2
+              head -c 800 resp.json >&2; echo >&2
+              exit 1
+            fi
+            got=$(jq 'length' resp.json)
+            all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
             if [ "$got" -lt 100 ]; then break; fi
             page=$((page + 1))
             if [ "$page" -gt 20 ]; then echo "Hit page cap, stopping"; break; fi
