@@ -41,9 +41,9 @@ jobs:
               exit 1
             fi
             all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
-            # Parse Link header for rel="next"; falls back to empty when absent.
-            next_url=$(grep -i '^link:' headers.txt | tr ',' '\n' \
-              | awk -F';' '/rel="next"/ { gsub(/[ <>]/,"",$1); print $1 }' | head -1 || true)
+            # Parse Link header for rel="next" URL (between <>). Empty when absent.
+            next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
+              | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
             hops=$((hops + 1))
             if [ "$hops" -gt 30 ]; then echo "Hit pagination hop cap"; break; fi
           done
