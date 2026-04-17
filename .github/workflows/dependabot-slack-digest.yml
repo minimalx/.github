@@ -24,24 +24,28 @@ jobs:
           TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
         run: |
           # Paginate through all open alerts. GitHub caps per_page at 100.
+          # Dependabot org alerts uses cursor pagination via Link header's rel="next".
+          # `page=` is explicitly rejected with HTTP 400.
           all='[]'
-          page=1
-          while :; do
-            status=$(curl -sS -o resp.json -w "%{http_code}" \
+          next_url="https://api.github.com/orgs/${ORG}/dependabot/alerts?state=open&per_page=100"
+          hops=0
+          while [ -n "$next_url" ]; do
+            status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/orgs/${ORG}/dependabot/alerts?state=open&per_page=100&page=${page}")
+              "$next_url")
             if [ "$status" != "200" ]; then
-              echo "GitHub API returned HTTP $status on page $page:" >&2
+              echo "GitHub API returned HTTP $status:" >&2
               head -c 800 resp.json >&2; echo >&2
               exit 1
             fi
-            got=$(jq 'length' resp.json)
             all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
-            if [ "$got" -lt 100 ]; then break; fi
-            page=$((page + 1))
-            if [ "$page" -gt 20 ]; then echo "Hit page cap, stopping"; break; fi
+            # Parse Link header for rel="next"; falls back to empty when absent.
+            next_url=$(grep -i '^link:' headers.txt | tr ',' '\n' \
+              | awk -F';' '/rel="next"/ { gsub(/[ <>]/,"",$1); print $1 }' | head -1 || true)
+            hops=$((hops + 1))
+            if [ "$hops" -gt 30 ]; then echo "Hit pagination hop cap"; break; fi
           done
           echo "$all" > alerts.json
           total=$(jq length alerts.json)
