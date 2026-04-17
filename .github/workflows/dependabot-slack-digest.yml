@@ -88,11 +88,11 @@ jobs:
             | join("\n")
           ' alerts.json)
 
-          top=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" --argjson n "$TOP_N" '
+          top=$(jq -r --argjson order "$severity_order" --argjson n "$TOP_N" '
             sort_by($order[.security_advisory.severity])
             | .[0:$n]
             | map(
-                "\($emoji[.security_advisory.severity] // "⚪") *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` " +
+                "• *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` " +
                 "(\(.dependency.package.ecosystem)) in `\(.repository.name)` — " +
                 "<\(.html_url)|\(.security_advisory.summary | .[0:90])\(if (.security_advisory.summary | length) > 90 then "…" else "" end)>"
               )
@@ -117,9 +117,7 @@ jobs:
                   text: { type: "mrkdwn", text: ("*Top repositories:*\n" + $by_repo) } },
                 { type: "divider" },
                 { type: "section",
-                  text: { type: "mrkdwn", text: ("*Top alerts:*\n" + $top) } },
-                { type: "context",
-                  elements: [ { type: "mrkdwn", text: ("View all: <https://github.com/orgs/" + $org + "/security/risk|Security overview>") } ] }
+                  text: { type: "mrkdwn", text: ("*Top alerts:*\n" + $top) } }
               ]
             }' > payload.json
 
