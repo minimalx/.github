@@ -2,7 +2,6 @@ name: Dependabot vulnerability digest → Slack
 
 on:
   schedule:
-    # Monday 10:00 UTC weekly digest
     - cron: '0 10 * * 1'
   workflow_dispatch:
 
@@ -15,11 +14,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Diagnose GitHub Dependabot alerts call
+        env:
+          TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
+        run: |
+          echo "### Exact call Octokit makes for listAlertsForOrg:"
+          curl -sS -o /tmp/gh.json -w "status=%{http_code}\n" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/orgs/minimalx/dependabot/alerts?state=open&severity=low%2Cmedium%2Chigh%2Ccritical&per_page=50"
+          head -c 400 /tmp/gh.json; echo
+
+      - name: Diagnose Slack webhook
+        env:
+          HOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          echo "### Slack webhook connectivity test:"
+          curl -sS -o /tmp/slack.txt -w "status=%{http_code}\n" \
+            -H 'Content-Type: application/json' \
+            --data '{"text":"Dependabot digest workflow diagnostic ping — ignore."}' \
+            "$HOOK"
+          echo "body: $(cat /tmp/slack.txt)"
+
       - name: Notify vulnerabilities
-        # Pinned to a release tag; check https://github.com/kunalnagarco/action-cve/releases for updates.
-        # severity must be an explicit non-empty list — the action forwards an empty
-        # string to the GitHub API which returns HTTP 400.
-        # See https://github.com/kunalnagarco/action-cve/blob/v1.17.0/src/fetch-alerts.ts
         uses: kunalnagarco/action-cve@v1.17.0
         with:
           token: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
