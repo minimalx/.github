@@ -2,6 +2,7 @@ name: Dependabot vulnerability digest → Slack
 
 on:
   schedule:
+    # Monday 10:00 UTC weekly digest
     - cron: '0 10 * * 1'
   workflow_dispatch:
 
@@ -13,35 +14,114 @@ jobs:
     name: Post Dependabot digest to Slack
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      ORG: minimalx
+      TOP_N: 15
     steps:
-      - name: Diagnose GitHub Dependabot alerts call
+      - name: Fetch open Dependabot alerts for org
+        id: fetch
         env:
           TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
         run: |
-          echo "### Exact call Octokit makes for listAlertsForOrg:"
-          curl -sS -o /tmp/gh.json -w "status=%{http_code}\n" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/orgs/minimalx/dependabot/alerts?state=open&severity=low%2Cmedium%2Chigh%2Ccritical&per_page=50"
-          head -c 400 /tmp/gh.json; echo
+          # Paginate through all open alerts. GitHub caps per_page at 100.
+          all='[]'
+          page=1
+          while :; do
+            resp=$(curl -sS \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/orgs/${ORG}/dependabot/alerts?state=open&per_page=100&page=${page}")
+            got=$(echo "$resp" | jq 'length')
+            all=$(jq -s '.[0] + .[1]' <(echo "$all") <(echo "$resp"))
+            if [ "$got" -lt 100 ]; then break; fi
+            page=$((page + 1))
+            if [ "$page" -gt 20 ]; then echo "Hit page cap, stopping"; break; fi
+          done
+          echo "$all" > alerts.json
+          total=$(jq length alerts.json)
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "Fetched $total open alerts"
 
-      - name: Diagnose Slack webhook
+      - name: Build Slack payload
+        id: build
+        run: |
+          total=${{ steps.fetch.outputs.total }}
+          if [ "$total" -eq 0 ]; then
+            jq -n --arg org "$ORG" '{
+              text: ("✅ No open Dependabot alerts across " + $org),
+              blocks: [
+                { type: "section",
+                  text: { type: "mrkdwn", text: ("*✅ Dependabot weekly digest — `" + $org + "`*\nNo open alerts. Nice work.") } }
+              ]
+            }' > payload.json
+            exit 0
+          fi
+
+          severity_order='{"critical":0,"high":1,"medium":2,"low":3}'
+
+          summary=$(jq -r --argjson order "$severity_order" '
+            group_by(.security_advisory.severity)
+            | map({ sev: .[0].security_advisory.severity, count: length })
+            | sort_by($order[.sev])
+            | map("*\(.sev | ascii_upcase)*: \(.count)")
+            | join("  ·  ")
+          ' alerts.json)
+
+          by_repo=$(jq -r --argjson order "$severity_order" '
+            group_by(.repository.name)
+            | map({ repo: .[0].repository.name, count: length,
+                    worst: (map(.security_advisory.severity) | sort_by($order[.]) | .[0]) })
+            | sort_by($order[.worst], -.count)
+            | .[0:10]
+            | map("• `\(.repo)` — \(.count) (worst: \(.worst))")
+            | join("\n")
+          ' alerts.json)
+
+          top=$(jq -r --argjson order "$severity_order" --argjson n "$TOP_N" '
+            sort_by($order[.security_advisory.severity])
+            | .[0:$n]
+            | map(
+                "• *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` " +
+                "(\(.dependency.package.ecosystem)) in `\(.repository.name)` — " +
+                "<\(.html_url)|\(.security_advisory.summary | .[0:90])\(if (.security_advisory.summary | length) > 90 then "…" else "" end)>"
+              )
+            | join("\n")
+          ' alerts.json)
+
+          jq -n \
+            --arg org "$ORG" \
+            --arg total "$total" \
+            --arg summary "$summary" \
+            --arg by_repo "$by_repo" \
+            --arg top "$top" \
+            '{
+              text: ("🚨 Dependabot digest: " + $total + " open alerts across " + $org),
+              blocks: [
+                { type: "header",
+                  text: { type: "plain_text", text: ("🚨 Dependabot weekly digest — " + $org) } },
+                { type: "section",
+                  text: { type: "mrkdwn", text: ("*" + $total + " open alerts*\n" + $summary) } },
+                { type: "divider" },
+                { type: "section",
+                  text: { type: "mrkdwn", text: ("*Top repositories:*\n" + $by_repo) } },
+                { type: "divider" },
+                { type: "section",
+                  text: { type: "mrkdwn", text: ("*Top alerts:*\n" + $top) } },
+                { type: "context",
+                  elements: [ { type: "mrkdwn", text: ("View all: <https://github.com/orgs/" + $org + "/security/risk|Security overview>") } ] }
+              ]
+            }' > payload.json
+
+      - name: Post to Slack
         env:
           HOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          echo "### Slack webhook connectivity test:"
-          curl -sS -o /tmp/slack.txt -w "status=%{http_code}\n" \
+          curl -sS -o response.txt -w "status=%{http_code}\n" \
             -H 'Content-Type: application/json' \
-            --data '{"text":"Dependabot digest workflow diagnostic ping — ignore."}' \
-            "$HOOK"
-          echo "body: $(cat /tmp/slack.txt)"
-
-      - name: Notify vulnerabilities
-        uses: kunalnagarco/action-cve@v1.17.0
-        with:
-          token: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
-          slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
-          org: minimalx
-          severity: low,medium,high,critical
-          count: 50
+            --data @payload.json "$HOOK"
+          body=$(cat response.txt)
+          if [ "$body" != "ok" ]; then
+            echo "Slack rejected the payload: $body" >&2
+            exit 1
+          fi
