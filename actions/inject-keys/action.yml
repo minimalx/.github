@@ -1,5 +1,5 @@
 name: "Generate Secret Keys Header"
-description: "Create secret_keys.h from four hex keys and save to a specified path"
+description: "Create secret_keys.h from four hex keys plus DESFire defaults"
 inputs:
   default_key_a:
     description: "Hex for DEFAULT_KEY_A"
