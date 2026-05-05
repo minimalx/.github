@@ -30,13 +30,6 @@ runs:
       with:
         python-version: "3.x"
 
-    - name: Install signing dependencies
-      shell: bash
-      run: |
-        set -euo pipefail
-        python -m pip install --upgrade pip
-        python -m pip install "cryptography>=41" "intelhex>=2.3"
-
     - name: Sign firmware
       shell: bash
       env:
@@ -51,4 +44,4 @@ runs:
         if [ -n "${{ inputs.output-path }}" ]; then
           args+=(--output "${{ inputs.output-path }}")
         fi
-        python "$GITHUB_ACTION_PATH/sign_firmware.py" "${args[@]}"
+        sh "$GITHUB_ACTION_PATH/run.sh" "${args[@]}"
