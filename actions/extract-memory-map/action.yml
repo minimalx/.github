@@ -1,0 +1,30 @@
+name: "Extract Memory Map"
+description: |
+  Compiles a small C extractor against the calling repo's
+  app_bootloader_interface.h and exports the slot addresses to
+  $GITHUB_ENV. The header is the single source of truth.
+
+  Exports: MAIN_APP_START, MAIN_APP_END, MAIN_SIG_START, MAIN_SIG_END,
+           MAIN_CRC_ADDR, BL_APP_START, BL_APP_END, BL_SIG_START,
+           BL_SIG_END, BL_CRC_ADDR.
+
+  The header must define EXEC_APP_START_ADDR, APP_FLASH_SIZE,
+  APP_SIG_START_ADDR, APP_SIG_END_ADDR, APP_CRC_ADDR, and the BOOT_*
+  equivalents.
+
+inputs:
+  include-dir:
+    description: "Directory containing app_bootloader_interface.h"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Compile and run extractor
+      shell: bash
+      run: |
+        set -euo pipefail
+        gcc -I "${{ inputs.include-dir }}" \
+          "$GITHUB_ACTION_PATH/extract.c" \
+          -o /tmp/_extract_memmap
+        /tmp/_extract_memmap | tee -a "$GITHUB_ENV"

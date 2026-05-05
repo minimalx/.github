@@ -20,6 +20,10 @@ inputs:
   checkout-token:
     description: 'Token for submodule checkout (defaults to runner token if not provided)'
     required: false
+  private-key:
+    description: 'PEM-encoded Ed25519 private key for firmware signing in the post-build step. Leave empty to fall back to the dummy test key.'
+    required: false
+    default: ''
 runs:
   using: 'composite'
   steps:
@@ -42,11 +46,16 @@ runs:
       env:
         PROJECT_PATH: ${{ inputs.project-path }}
         PROJECT_TARGET: ${{ inputs.project-target }}
+        FIRMWARE_SIGNING_PRIVATE_KEY: ${{ inputs.private-key }}
       run: |
-        # Mount workspace; pass args expected by your Docker entrypoint
+        # Mount workspace; pass args expected by your Docker entrypoint.
+        # FIRMWARE_SIGNING_PRIVATE_KEY is forwarded so the .cproject post-build
+        # step can sign the linked image. Empty -> sign step falls back to the
+        # committed dummy key.
         docker run --rm \
           -v "${GITHUB_WORKSPACE}:/workspace" \
           -w /workspace \
+          -e FIRMWARE_SIGNING_PRIVATE_KEY \
           stm32cubeide-builder \
           "${PROJECT_PATH}" "${PROJECT_TARGET}"
 

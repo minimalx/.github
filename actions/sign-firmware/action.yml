@@ -1,0 +1,47 @@
+name: "Sign Firmware (Ed25519)"
+description: |
+  Sign an Intel HEX firmware image with Ed25519 and patch the 64-byte
+  signature into a fixed region at app_end - 68. Does NOT compute CRC --
+  run the existing CRC step AFTER this action.
+
+inputs:
+  hex-path:
+    description: "Path to the input Intel HEX file"
+    required: true
+  app-start:
+    description: "App slot start address (e.g. 0x08020000)"
+    required: true
+  app-end:
+    description: "App slot end address, exclusive (e.g. 0x08040000)"
+    required: true
+  output-path:
+    description: "Output HEX path (defaults to in-place modification of hex-path)"
+    required: false
+    default: ""
+  private-key:
+    description: "PEM-encoded Ed25519 private key contents (pass secrets.FIRMWARE_SIGNING_PRIVATE_KEY)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+
+    - name: Sign firmware
+      shell: bash
+      env:
+        FIRMWARE_SIGNING_PRIVATE_KEY: ${{ inputs.private-key }}
+      run: |
+        set -euo pipefail
+        args=(
+          --hex "${{ inputs.hex-path }}"
+          --app-start "${{ inputs.app-start }}"
+          --app-end "${{ inputs.app-end }}"
+        )
+        if [ -n "${{ inputs.output-path }}" ]; then
+          args+=(--output "${{ inputs.output-path }}")
+        fi
+        sh "$GITHUB_ACTION_PATH/run.sh" "${args[@]}"
