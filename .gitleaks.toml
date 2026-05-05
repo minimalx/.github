@@ -1,0 +1,10 @@
+title = "minimalx .github gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Committed test fixtures that are intentionally non-secret"
+paths = [
+  '''actions/sign-firmware/tests/dummy_private_key\.pem''',
+]
