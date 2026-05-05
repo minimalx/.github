@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate a C header with four hex keys and an inline byte-extractor.
+Generate a C header with four hex keys and the default DESFire settings.
 
 Usage:
-  python gen_secret_keys_header.py <DEFAULT_KEY_A> <DEFAULT_KEY_B> <MINIMAL_KEY_A> <MINIMAL_KEY_B> -o <output_path>
+  python gen_secret_keys_header.py <DEFAULT_KEY_A> <DEFAULT_KEY_B>
+      <MINIMAL_KEY_A> <MINIMAL_KEY_B> -o <output_path>
 """
 
 import argparse
 import os
-import sys
 
 def parse_hex(s: str) -> int:
     try:
@@ -33,16 +33,19 @@ def generate_header(dka: int, dkb: int, mka: int, mkb: int) -> str:
             raise ValueError(f"{name} exceeds 64 bits")
 
     min_digits = 12  # pretty 48-bit style by default
-    dka_s, dkb_s = fmt_hex(dka, min_digits), fmt_hex(dkb, min_digits)
-    mka_s, mkb_s = fmt_hex(mka, min_digits), fmt_hex(mkb, min_digits)
+    dka_s = fmt_hex(dka, min_digits) + "ULL"
+    dkb_s = fmt_hex(dkb, min_digits) + "ULL"
+    mka_s = fmt_hex(mka, min_digits) + "ULL"
+    mkb_s = fmt_hex(mkb, min_digits) + "ULL"
 
-    max_bytes = max(1, min(8, max((dka.bit_length() + 7) // 8,
-                                  (dkb.bit_length() + 7) // 8,
-                                  (mka.bit_length() + 7) // 8,
-                                  (mkb.bit_length() + 7) // 8)))
-    bits = max_bytes * 8
+    return f"""/*****************************************************************************
+ * Module: secret_keys
+ * Purpose: Placeholder key constants and helpers for local builds.
+ * Author: Jakub Szypicyn
+ * Date: 2026-04-23
+ *****************************************************************************/
 
-    return f"""#ifndef SECRET_KEYS_H
+#ifndef SECRET_KEYS_H
 #define SECRET_KEYS_H
 
 #include <stdint.h>
@@ -53,20 +56,44 @@ def generate_header(dka: int, dkb: int, mka: int, mkb: int) -> str:
 #define MINIMAL_KEY_A {mka_s}
 #define MINIMAL_KEY_B {mkb_s}
 
-/* Get the n-th byte from a key (0 = least-significant byte). */
+#ifndef DESFIRE_ENABLED
+#define DESFIRE_ENABLED 0U
+#endif
+
+#ifndef DESFIRE_AID_BYTES
+#define DESFIRE_AID_BYTES {{ 0x00U, 0x00U, 0x00U }}
+#endif
+
+#ifndef DESFIRE_FILE_ID
+#define DESFIRE_FILE_ID 0U
+#endif
+
+#ifndef DESFIRE_KEY_NUMBER
+#define DESFIRE_KEY_NUMBER 0U
+#endif
+
+#ifndef DESFIRE_UID_FILE_LENGTH
+#define DESFIRE_UID_FILE_LENGTH 7U
+#endif
+
+#ifndef DESFIRE_AES_KEY_BYTES
+#define DESFIRE_AES_KEY_BYTES                                 \\
+    {{ 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, \\
+      0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U }}
+#endif
+
 static inline uint8_t
 key_nth_byte (uint64_t key, unsigned n)
 {{
     return (uint8_t)((key >> (8u * n)) & 0xFFU);
 }}
 
-/* Convenience macros for your constants (valid n for these {bits}-bit keys: 0..{max_bytes - 1}). */
 #define DEFAULT_KEY_A_BYTE(n) key_nth_byte(DEFAULT_KEY_A, (n))
 #define DEFAULT_KEY_B_BYTE(n) key_nth_byte(DEFAULT_KEY_B, (n))
 #define MINIMAL_KEY_A_BYTE(n) key_nth_byte(MINIMAL_KEY_A, (n))
 #define MINIMAL_KEY_B_BYTE(n) key_nth_byte(MINIMAL_KEY_B, (n))
 
-#endif
+#endif /* SECRET_KEYS_H */
 """
 
 def main():
