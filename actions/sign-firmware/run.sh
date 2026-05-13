@@ -16,11 +16,28 @@ if python3 -c "import cryptography, intelhex" 2>/dev/null; then
 fi
 
 VENV="$SCRIPT_DIR/.venv"
-if [ ! -x "$VENV/bin/python" ]; then
-    echo "sign-firmware: bootstrapping venv at $VENV (one-time)" >&2
-    python3 -m venv "$VENV"
-    "$VENV/bin/pip" install --quiet --upgrade pip
-    "$VENV/bin/pip" install --quiet "cryptography>=41" "intelhex>=2.3"
+VENV_PY="$VENV/bin/python"
+if [ -x "$VENV_PY" ] && "$VENV_PY" -c "import cryptography, intelhex" 2>/dev/null; then
+    exec "$VENV_PY" "$SCRIPT_DIR/sign_firmware.py" "$@"
 fi
 
-exec "$VENV/bin/python" "$SCRIPT_DIR/sign_firmware.py" "$@"
+if [ ! -x "$VENV_PY" ] || ! "$VENV_PY" -c "import cryptography, intelhex" 2>/dev/null; then
+    echo "sign-firmware: bootstrapping venv at $VENV (one-time)" >&2
+    rm -rf "$VENV"
+    if ! python3 -m venv "$VENV"; then
+        if [ "$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1; then
+            echo "sign-firmware: installing python3-venv in container" >&2
+            apt-get update
+            apt-get install -y python3-venv python3-pip
+            rm -rf "$VENV"
+            python3 -m venv "$VENV"
+        else
+            echo "sign-firmware: python3 venv support is unavailable; install python3-venv" >&2
+            exit 1
+        fi
+    fi
+    "$VENV_PY" -m pip install --quiet --upgrade pip
+    "$VENV_PY" -m pip install --quiet "cryptography>=41" "intelhex>=2.3"
+fi
+
+exec "$VENV_PY" "$SCRIPT_DIR/sign_firmware.py" "$@"
