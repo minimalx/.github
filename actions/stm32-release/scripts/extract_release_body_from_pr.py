@@ -2,10 +2,43 @@
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
+
+
+# Matches the CodeRabbit review-stack block (and any similar bracketed
+# HTML-comment block) including the comment markers themselves.
+_REVIEW_STACK_RE = re.compile(
+    r"<!--\s*review_stack_entry_start\s*-->.*?<!--\s*review_stack_entry_end\s*-->",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# Matches any remaining HTML comment, including multi-line ones.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def clean_release_notes(text: str) -> str:
+    """
+    Strip HTML comments and bracketed auto-generated blocks from PR-derived
+    release notes.
+
+    - Removes any content between `<!-- review_stack_entry_start -->` and
+      `<!-- review_stack_entry_end -->` (inclusive).
+    - Removes all remaining `<!-- ... -->` HTML comments.
+    - Collapses excessive blank lines and trims leading/trailing whitespace.
+    Tolerant of inputs that don't contain any of these markers.
+    """
+    if not text:
+        return text
+
+    cleaned = _REVIEW_STACK_RE.sub("", text)
+    cleaned = _HTML_COMMENT_RE.sub("", cleaned)
+    # Collapse 3+ consecutive newlines into a single blank line.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def github_api_get(url: str, token: str):
@@ -118,7 +151,7 @@ def main(argv: list[str]) -> int:
     print(f"[extract-release-body] Using PR #{pr_number}.", file=sys.stderr)
 
     if pr_body:
-        release_body = pr_body
+        release_body = clean_release_notes(pr_body)
         print("[extract-release-body] Using PR body as release notes.", file=sys.stderr)
     else:
         release_body = f"Release for tag {args.tag} (PR #{pr_number})"
