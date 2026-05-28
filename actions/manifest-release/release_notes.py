@@ -235,8 +235,23 @@ def change_marker(old_value: str, new_value: str) -> str:
     return CHANGE_MARK
 
 
-def report_external_versions(base_sha: str, path: str) -> None:
+def ext_name_to_submodule_path(name: str) -> str:
+    """Best-effort map an external component name to a submodule path.
+
+    Uses the first whitespace-delimited token, lowercased (e.g. "HMI Firmware"
+    -> "hmi"), which matches single-word submodule paths. Used to fold a
+    manual->submodule migration into one entry; the match is intentionally
+    conservative so it only fires when the token equals a real submodule path.
+    """
+    tokens = name.strip().split()
+    return tokens[0].lower() if tokens else ""
+
+
+def report_external_versions(
+    base_sha: str, path: str, skip_names: Optional[set] = None
+) -> None:
     """Print release notes for external versions JSON (if present)."""
+    skip_names = skip_names or set()
     old_entries = load_ext_submodules_from_treeish(base_sha, path)
     new_entries = load_ext_submodules_from_file(path)
     if not old_entries and not new_entries:
@@ -254,6 +269,12 @@ def report_external_versions(base_sha: str, path: str) -> None:
         name = entry["name"]
         if name not in names:
             names.append(name)
+
+    # Skip components folded into the submodule section (a manual entry that has
+    # migrated to submodule tracking is reported once, on the submodule line).
+    names = [name for name in names if name not in skip_names]
+    if not names:
+        return
 
     print(f"{path}:")
     print()
@@ -348,6 +369,29 @@ def main() -> int:
         or os.environ.get("GITHUB_TOKEN")
     )
 
+    ext_path = os.environ.get("EXT_VERSIONS_FILE", DEFAULT_EXT_VERSIONS_FILE).strip()
+
+    # Detect components migrating from manual (external JSON) tracking to a
+    # submodule in this release: present in the external file at base, gone at
+    # head, with a name that maps to a submodule path. Such a component would
+    # otherwise show as two half-missing lines ("hmi: (missing) -> vNEW" plus
+    # "HMI Firmware: vOLD -> (missing)"); instead we seed the submodule's old
+    # value from the external base version and suppress the external duplicate.
+    ext_old_map: Dict[str, Dict[str, str]] = {}
+    ext_new_map: Dict[str, Dict[str, str]] = {}
+    if ext_path:
+        ext_old_map = {e["name"]: e for e in load_ext_submodules_from_treeish(base_sha, ext_path)}
+        ext_new_map = {e["name"]: e for e in load_ext_submodules_from_file(ext_path)}
+
+    migrated_path_to_ext: Dict[str, Dict[str, str]] = {}
+    for name, entry in ext_old_map.items():
+        if name in ext_new_map:
+            continue
+        candidate = ext_name_to_submodule_path(name)
+        if candidate in paths:
+            migrated_path_to_ext[candidate] = entry
+    migrated_names = {entry["name"] for entry in migrated_path_to_ext.values()}
+
     for path in paths:
         remote_tags = get_remote_tags(path, token)
 
@@ -364,6 +408,12 @@ def main() -> int:
             remote_tags,
             exclude_substring=BOOTLOADER_EXCLUDE_SUBSTRING,
         )
+        # Newly added submodule that supersedes a removed manual entry: show the
+        # manual base version instead of "(missing)" so it reads as one change.
+        if old_sha is None and path in migrated_path_to_ext:
+            seeded = format_external_value(migrated_path_to_ext[path].get("version"))
+            if seeded != "(missing)":
+                old_desc = seeded
         new_desc = describe_commit(
             new_sha,
             path,
@@ -384,9 +434,8 @@ def main() -> int:
             )
         print()
 
-    ext_path = os.environ.get("EXT_VERSIONS_FILE", DEFAULT_EXT_VERSIONS_FILE).strip()
     if ext_path:
-        report_external_versions(base_sha, ext_path)
+        report_external_versions(base_sha, ext_path, skip_names=migrated_names)
 
     print("::endgroup::")
     return 0
