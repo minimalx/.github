@@ -22,18 +22,13 @@ inputs:
     required: false
     default: "firmware-artifacts"
   checkout-submodules:
-    description: "Pass 'recursive' to enable submodule checkout"
+    description: "(Deprecated) No-op. The caller is responsible for checking out the repo before invoking this action."
     required: false
     default: "false"
 
 runs:
   using: "composite"
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: ${{ inputs.checkout-submodules }}
-
     - name: Build firmware
       shell: bash
       run: |
