@@ -52,23 +52,84 @@ jobs:
           echo "total=$total" >> "$GITHUB_OUTPUT"
           echo "Fetched $total open alerts"
 
+      - name: Fetch recently-fixed Dependabot alerts (last 7 days)
+        id: fixed
+        env:
+          TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
+        run: |
+          # "Fixed in the last week" = alerts in state `fixed` whose fixed_at is
+          # within the trailing 7 days. We sort by updated desc and stop
+          # paginating once a page's oldest entry predates the cutoff (a fixed
+          # alert's updated_at is >= its fixed_at), so this stays cheap even with
+          # a large all-time fixed history.
+          cutoff=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Counting alerts fixed since $cutoff"
+          all='[]'
+          next_url="https://api.github.com/orgs/${ORG}/dependabot/alerts?state=fixed&sort=updated&direction=desc&per_page=100"
+          hops=0
+          while [ -n "$next_url" ]; do
+            status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$next_url")
+            if [ "$status" != "200" ]; then
+              echo "GitHub API returned HTTP $status:" >&2
+              head -c 800 resp.json >&2; echo >&2
+              exit 1
+            fi
+            all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
+            # Sorted by updated desc: once this page's oldest updated_at is older
+            # than the cutoff, no later page can contain a recent fix — stop.
+            oldest=$(jq -r 'if length > 0 then (map(.updated_at) | min) else "" end' resp.json)
+            if [ -n "$oldest" ] && [[ "$oldest" < "$cutoff" ]]; then break; fi
+            next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
+              | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
+            hops=$((hops + 1))
+            if [ "$hops" -gt 30 ]; then echo "Hit pagination hop cap"; break; fi
+          done
+          jq --arg cutoff "$cutoff" \
+            '[.[] | select(.fixed_at != null and .fixed_at >= $cutoff)]' \
+            <(echo "$all") > fixed_recent.json
+          fixed_total=$(jq length fixed_recent.json)
+          echo "fixed_total=$fixed_total" >> "$GITHUB_OUTPUT"
+          echo "Fixed in the last 7 days: $fixed_total"
+
       - name: Build Slack payload
         id: build
         run: |
+          severity_order='{"critical":0,"high":1,"medium":2,"low":3}'
+          severity_emoji='{"critical":"🚨","high":"⚠️","medium":"🟠","low":"🔵"}'
+
           total=${{ steps.fetch.outputs.total }}
+          fixed_total=${{ steps.fixed.outputs.fixed_total }}
+
+          # "Fixed in the last 7 days" — included in every digest (even the
+          # all-clear one) so the channel always sees remediation progress.
+          if [ "$fixed_total" -gt 0 ]; then
+            fixed_breakdown=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
+              group_by(.security_advisory.severity)
+              | map({ sev: .[0].security_advisory.severity, count: length })
+              | sort_by($order[.sev])
+              | map("\($emoji[.sev] // "⚪") \(.count)")
+              | join("  ·  ")
+            ' fixed_recent.json)
+            fixed_line="*✅ Fixed in the last 7 days: ${fixed_total}*  (${fixed_breakdown})"
+          else
+            fixed_line="*✅ Fixed in the last 7 days: 0*"
+          fi
+
           if [ "$total" -eq 0 ]; then
-            jq -n --arg org "$ORG" '{
+            jq -n --arg org "$ORG" --arg fixed "$fixed_line" '{
               text: ("✅ No open Dependabot alerts across " + $org),
               blocks: [
                 { type: "section",
-                  text: { type: "mrkdwn", text: ("*✅ Dependabot weekly digest — `" + $org + "`*\nNo open alerts. Nice work.") } }
+                  text: { type: "mrkdwn",
+                          text: ("*✅ Dependabot weekly digest — `" + $org + "`*\nNo open alerts. Nice work.\n" + $fixed) } }
               ]
             }' > payload.json
             exit 0
           fi
-
-          severity_order='{"critical":0,"high":1,"medium":2,"low":3}'
-          severity_emoji='{"critical":"🚨","high":"⚠️","medium":"🟠","low":"🔵"}'
 
           summary=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
             group_by(.security_advisory.severity)
@@ -99,12 +160,20 @@ jobs:
             | join("\n")
           ' alerts.json)
 
+          # Slack hard-caps a section's text field at 3000 chars (exceeding it
+          # is rejected as invalid_blocks). Truncate the two variable-length
+          # sections on a line boundary so a partial `<url|text>` link is never
+          # left dangling.
+          by_repo=$(printf '%s' "$by_repo" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…truncated_" else . end')
+          top=$(printf '%s' "$top" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…truncated_" else . end')
+
           jq -n \
             --arg org "$ORG" \
             --arg total "$total" \
             --arg summary "$summary" \
             --arg by_repo "$by_repo" \
             --arg top "$top" \
+            --arg fixed "$fixed_line" \
             '{
               text: ("🚨 Dependabot digest: " + $total + " open alerts across " + $org),
               blocks: [
@@ -112,6 +181,8 @@ jobs:
                   text: { type: "plain_text", text: ("🚨 Dependabot weekly digest — " + $org) } },
                 { type: "section",
                   text: { type: "mrkdwn", text: ("*" + $total + " open alerts*\n" + $summary) } },
+                { type: "section",
+                  text: { type: "mrkdwn", text: $fixed } },
                 { type: "divider" },
                 { type: "section",
                   text: { type: "mrkdwn", text: ("*Top repositories:*\n" + $by_repo) } },
