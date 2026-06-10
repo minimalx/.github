@@ -1,0 +1,197 @@
+name: Dependabot daily (new + fixed) → Slack
+
+on:
+  schedule:
+    # Daily 09:00 UTC — what opened and what got fixed in the last day. The
+    # weekly roll-up digest (dependabot-slack-digest.yml) runs on Mondays.
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Post daily Dependabot changes to Slack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ORG: minimalx
+    steps:
+      - name: Fetch alerts opened in the last day
+        id: new
+        env:
+          TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
+        run: |
+          # "New" = open alerts whose created_at is within the trailing window.
+          # The 25h lookback is intentionally wider than the 24h schedule so an
+          # alert created on a run boundary is never dropped — at worst it shows
+          # up in two consecutive daily posts once (far better than missing it).
+          cutoff=$(date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Counting open alerts created since $cutoff"
+          all='[]'
+          next_url="https://api.github.com/orgs/${ORG}/dependabot/alerts?state=open&sort=created&direction=desc&per_page=100"
+          hops=0
+          while [ -n "$next_url" ]; do
+            status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
+              --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-connrefused \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$next_url")
+            if [ "$status" != "200" ]; then
+              echo "GitHub API returned HTTP $status:" >&2
+              head -c 800 resp.json >&2; echo >&2
+              exit 1
+            fi
+            all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
+            # Sorted by created desc: stop once a page's oldest created_at
+            # predates the cutoff — no later page can hold a newer alert.
+            oldest=$(jq -r 'if length > 0 then (map(.created_at) | min) else "" end' resp.json)
+            if [ -n "$oldest" ] && [[ "$oldest" < "$cutoff" ]]; then break; fi
+            next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
+              | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
+            hops=$((hops + 1))
+            if [ "$hops" -gt 30 ]; then
+              echo "Hit pagination hop cap before reaching the cutoff; refusing to post partial results." >&2
+              exit 1
+            fi
+          done
+          jq --arg cutoff "$cutoff" '[.[] | select(.created_at >= $cutoff)]' \
+            <(echo "$all") > new.json
+          new_total=$(jq length new.json)
+          echo "new_total=$new_total" >> "$GITHUB_OUTPUT"
+          echo "New open alerts in window: $new_total"
+
+      - name: Fetch alerts fixed in the last day
+        id: fixed
+        env:
+          TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
+        run: |
+          # "Fixed" = alerts in state `fixed` whose fixed_at is within the same
+          # 25h window. Sorted by updated desc, we stop paginating once a page
+          # predates the cutoff (a fixed alert's updated_at is >= its fixed_at).
+          cutoff=$(date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Counting alerts fixed since $cutoff"
+          all='[]'
+          next_url="https://api.github.com/orgs/${ORG}/dependabot/alerts?state=fixed&sort=updated&direction=desc&per_page=100"
+          hops=0
+          while [ -n "$next_url" ]; do
+            status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
+              --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-connrefused \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$next_url")
+            if [ "$status" != "200" ]; then
+              echo "GitHub API returned HTTP $status:" >&2
+              head -c 800 resp.json >&2; echo >&2
+              exit 1
+            fi
+            all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
+            oldest=$(jq -r 'if length > 0 then (map(.updated_at) | min) else "" end' resp.json)
+            if [ -n "$oldest" ] && [[ "$oldest" < "$cutoff" ]]; then break; fi
+            next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
+              | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
+            hops=$((hops + 1))
+            if [ "$hops" -gt 30 ]; then
+              echo "Hit pagination hop cap before reaching the cutoff; refusing to post partial results." >&2
+              exit 1
+            fi
+          done
+          jq --arg cutoff "$cutoff" \
+            '[.[] | select(.fixed_at != null and .fixed_at >= $cutoff)]' \
+            <(echo "$all") > fixed.json
+          fixed_total=$(jq length fixed.json)
+          echo "fixed_total=$fixed_total" >> "$GITHUB_OUTPUT"
+          echo "Fixed in window: $fixed_total"
+
+      - name: Build Slack payload
+        id: build
+        if: steps.new.outputs.new_total != '0' || steps.fixed.outputs.fixed_total != '0'
+        run: |
+          severity_order='{"critical":0,"high":1,"medium":2,"low":3}'
+          severity_emoji='{"critical":"🚨","high":"⚠️","medium":"🟠","low":"🔵"}'
+          new_total=${{ steps.new.outputs.new_total }}
+          fixed_total=${{ steps.fixed.outputs.fixed_total }}
+
+          # Each section is built only when it has something to report; the
+          # payload assembly below drops empty ones. Section text is capped at
+          # Slack's 3000-char limit on a line boundary.
+          new_text=""
+          if [ "$new_total" -gt 0 ]; then
+            s=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
+              group_by(.security_advisory.severity)
+              | map({ sev: .[0].security_advisory.severity, count: length })
+              | sort_by($order[.sev])
+              | map("\($emoji[.sev] // "⚪") *\(.sev | ascii_upcase)*: \(.count)")
+              | join("  ·  ")' new.json)
+            l=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
+              sort_by($order[.security_advisory.severity])
+              | map("• \($emoji[.security_advisory.severity] // "⚪") *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` (\(.dependency.package.ecosystem)) in `\(.repository.name)` — <\(.html_url)|\(.security_advisory.summary | .[0:90])\(if (.security_advisory.summary | length) > 90 then "…" else "" end)>")
+              | join("\n")' new.json)
+            new_text=$(printf '*🆕 %s new in the last ~25h*\n%s\n%s' "$new_total" "$s" "$l")
+            new_text=$(printf '%s' "$new_text" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…and more (truncated)_" else . end')
+          fi
+
+          fixed_text=""
+          if [ "$fixed_total" -gt 0 ]; then
+            s=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
+              group_by(.security_advisory.severity)
+              | map({ sev: .[0].security_advisory.severity, count: length })
+              | sort_by($order[.sev])
+              | map("\($emoji[.sev] // "⚪") *\(.sev | ascii_upcase)*: \(.count)")
+              | join("  ·  ")' fixed.json)
+            l=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
+              sort_by($order[.security_advisory.severity])
+              | map("• \($emoji[.security_advisory.severity] // "⚪") `\(.dependency.package.name)` (\(.dependency.package.ecosystem)) in `\(.repository.name)`")
+              | join("\n")' fixed.json)
+            fixed_text=$(printf '*✅ %s fixed in the last ~25h*\n%s\n%s' "$fixed_total" "$s" "$l")
+            fixed_text=$(printf '%s' "$fixed_text" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…and more (truncated)_" else . end')
+          fi
+
+          if [ "$new_total" -gt 0 ] && [ "$fixed_total" -gt 0 ]; then
+            fallback="🛡️ Dependabot daily — ${new_total} new, ${fixed_total} fixed (${ORG})"
+          elif [ "$new_total" -gt 0 ]; then
+            fallback="🆕 Dependabot daily — ${new_total} new (${ORG})"
+          else
+            fallback="✅ Dependabot daily — ${fixed_total} fixed (${ORG})"
+          fi
+
+          jq -n \
+            --arg org "$ORG" \
+            --arg fallback "$fallback" \
+            --argjson new_total "$new_total" \
+            --argjson fixed_total "$fixed_total" \
+            --arg new_text "$new_text" \
+            --arg fixed_text "$fixed_text" \
+            '{
+              text: $fallback,
+              blocks: ([
+                { type: "header", text: { type: "plain_text", text: ("🛡️ Dependabot daily — " + $org) } },
+                (if $new_total   > 0 then { type: "section", text: { type: "mrkdwn", text: $new_text } } else empty end),
+                (if ($new_total > 0 and $fixed_total > 0) then { type: "divider" } else empty end),
+                (if $fixed_total > 0 then { type: "section", text: { type: "mrkdwn", text: $fixed_text } } else empty end)
+              ])
+            }' > payload.json
+
+      - name: Post to Slack
+        if: steps.new.outputs.new_total != '0' || steps.fixed.outputs.fixed_total != '0'
+        env:
+          HOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          # No --retry here: the Slack webhook POST is not idempotent, so a retry
+          # after a request that actually landed could double-post. Timeouts only.
+          curl -sS -o response.txt -w "status=%{http_code}\n" \
+            --connect-timeout 10 --max-time 30 \
+            -H 'Content-Type: application/json' \
+            --data @payload.json "$HOOK"
+          body=$(cat response.txt)
+          if [ "$body" != "ok" ]; then
+            echo "Slack rejected the payload: $body" >&2
+            exit 1
+          fi
+
+      - name: Nothing to report
+        if: steps.new.outputs.new_total == '0' && steps.fixed.outputs.fixed_total == '0'
+        run: echo "No new or fixed Dependabot alerts in the last day — staying silent."
