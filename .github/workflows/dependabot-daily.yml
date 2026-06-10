@@ -106,6 +106,45 @@ jobs:
           echo "fixed_total=$fixed_total" >> "$GITHUB_OUTPUT"
           echo "Fixed in window: $fixed_total"
 
+      - name: Fetch all currently-open alerts (per-repo context)
+        id: openall
+        # Only needed when we're actually going to post (new or fixed > 0). This
+        # is contextual info and must NOT itself trigger a post.
+        if: steps.new.outputs.new_total != '0' || steps.fixed.outputs.fixed_total != '0'
+        env:
+          TOKEN: ${{ secrets.DEPENDABOT_SCAN_TOKEN }}
+        run: |
+          # Snapshot of every currently-open alert across the org, for the
+          # "currently open per repository" context section.
+          all='[]'
+          next_url="https://api.github.com/orgs/${ORG}/dependabot/alerts?state=open&per_page=100"
+          hops=0
+          while [ -n "$next_url" ]; do
+            status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
+              --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-connrefused \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$next_url")
+            if [ "$status" != "200" ]; then
+              echo "GitHub API returned HTTP $status:" >&2
+              head -c 800 resp.json >&2; echo >&2
+              exit 1
+            fi
+            all=$(jq -s '.[0] + .[1]' <(echo "$all") resp.json)
+            next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
+              | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
+            hops=$((hops + 1))
+            if [ "$hops" -gt 30 ]; then
+              echo "Hit pagination hop cap before exhausting open alerts; refusing to post partial results." >&2
+              exit 1
+            fi
+          done
+          echo "$all" > open.json
+          open_total=$(jq length open.json)
+          echo "open_total=$open_total" >> "$GITHUB_OUTPUT"
+          echo "Currently open across org: $open_total"
+
       - name: Build Slack payload
         id: build
         if: steps.new.outputs.new_total != '0' || steps.fixed.outputs.fixed_total != '0'
@@ -114,10 +153,26 @@ jobs:
           severity_emoji='{"critical":"🚨","high":"⚠️","medium":"🟠","low":"🔵"}'
           new_total=${{ steps.new.outputs.new_total }}
           fixed_total=${{ steps.fixed.outputs.fixed_total }}
+          open_total=${{ steps.openall.outputs.open_total }}
 
-          # Each section is built only when it has something to report; the
-          # payload assembly below drops empty ones. Section text is capped at
-          # Slack's 3000-char limit on a line boundary.
+          # Per-repository severity breakdown, sorted worst-severity then count.
+          # Reused for the "fixed" and "currently open" sections. Reads $f (file).
+          per_repo() {
+            jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
+              group_by(.repository.name)
+              | map({ repo: .[0].repository.name, total: length,
+                      worst: (map(.security_advisory.severity) | sort_by($order[.]) | .[0]),
+                      bd: (group_by(.security_advisory.severity)
+                           | map({ sev: .[0].security_advisory.severity, c: length })
+                           | sort_by($order[.sev])) })
+              | sort_by($order[.worst], -.total)
+              | map("• `\(.repo)` — " + (.bd | map("\($emoji[.sev] // "⚪") \(.c)") | join("  ")))
+              | join("\n")' "$1"
+          }
+          # Cap a section's text at Slack's 3000-char limit on a line boundary.
+          cap() { printf '%s' "$1" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…and more (truncated)_" else . end'; }
+
+          # NEW — keep the actionable per-alert detail (with advisory links).
           new_text=""
           if [ "$new_total" -gt 0 ]; then
             s=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
@@ -130,24 +185,22 @@ jobs:
               sort_by($order[.security_advisory.severity])
               | map("• \($emoji[.security_advisory.severity] // "⚪") *\(.security_advisory.severity | ascii_upcase)* `\(.dependency.package.name)` (\(.dependency.package.ecosystem)) in `\(.repository.name)` — <\(.html_url)|\(.security_advisory.summary | .[0:90])\(if (.security_advisory.summary | length) > 90 then "…" else "" end)>")
               | join("\n")' new.json)
-            new_text=$(printf '*🆕 %s new in the last ~25h*\n%s\n%s' "$new_total" "$s" "$l")
-            new_text=$(printf '%s' "$new_text" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…and more (truncated)_" else . end')
+            new_text=$(cap "$(printf '*🆕 %s new in the last ~25h*\n%s\n%s' "$new_total" "$s" "$l")")
           fi
 
+          # FIXED — per-repository severity summary only (no individual issues).
           fixed_text=""
           if [ "$fixed_total" -gt 0 ]; then
-            s=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
-              group_by(.security_advisory.severity)
-              | map({ sev: .[0].security_advisory.severity, count: length })
-              | sort_by($order[.sev])
-              | map("\($emoji[.sev] // "⚪") *\(.sev | ascii_upcase)*: \(.count)")
-              | join("  ·  ")' fixed.json)
-            l=$(jq -r --argjson order "$severity_order" --argjson emoji "$severity_emoji" '
-              sort_by($order[.security_advisory.severity])
-              | map("• \($emoji[.security_advisory.severity] // "⚪") `\(.dependency.package.name)` (\(.dependency.package.ecosystem)) in `\(.repository.name)`")
-              | join("\n")' fixed.json)
-            fixed_text=$(printf '*✅ %s fixed in the last ~25h*\n%s\n%s' "$fixed_total" "$s" "$l")
-            fixed_text=$(printf '%s' "$fixed_text" | jq -Rsr 'if length > 2900 then (.[0:2900] | sub("\n[^\n]*$"; "")) + "\n_…and more (truncated)_" else . end')
+            r=$(per_repo fixed.json)
+            fixed_text=$(cap "$(printf '*✅ %s fixed in the last ~25h*\n%s' "$fixed_total" "$r")")
+          fi
+
+          # CURRENTLY OPEN — per-repository context (always shown when posting).
+          if [ "$open_total" -gt 0 ]; then
+            r=$(per_repo open.json)
+            open_text=$(cap "$(printf '*📊 Currently open: %s across the org*\n%s' "$open_total" "$r")")
+          else
+            open_text="*📊 Currently open: 0 across the org* 🎉"
           fi
 
           if [ "$new_total" -gt 0 ] && [ "$fixed_total" -gt 0 ]; then
@@ -165,13 +218,16 @@ jobs:
             --argjson fixed_total "$fixed_total" \
             --arg new_text "$new_text" \
             --arg fixed_text "$fixed_text" \
+            --arg open_text "$open_text" \
             '{
               text: $fallback,
               blocks: ([
                 { type: "header", text: { type: "plain_text", text: ("🛡️ Dependabot daily — " + $org) } },
                 (if $new_total   > 0 then { type: "section", text: { type: "mrkdwn", text: $new_text } } else empty end),
                 (if ($new_total > 0 and $fixed_total > 0) then { type: "divider" } else empty end),
-                (if $fixed_total > 0 then { type: "section", text: { type: "mrkdwn", text: $fixed_text } } else empty end)
+                (if $fixed_total > 0 then { type: "section", text: { type: "mrkdwn", text: $fixed_text } } else empty end),
+                { type: "divider" },
+                { type: "section", text: { type: "mrkdwn", text: $open_text } }
               ])
             }' > payload.json
 
