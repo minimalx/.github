@@ -31,6 +31,7 @@ jobs:
           hops=0
           while [ -n "$next_url" ]; do
             status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
+              --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-connrefused \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -45,7 +46,10 @@ jobs:
             next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
               | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
             hops=$((hops + 1))
-            if [ "$hops" -gt 30 ]; then echo "Hit pagination hop cap"; break; fi
+            if [ "$hops" -gt 30 ]; then
+              echo "Hit pagination hop cap before reaching the end; refusing to post partial results." >&2
+              exit 1
+            fi
           done
           echo "$all" > alerts.json
           total=$(jq length alerts.json)
@@ -69,6 +73,7 @@ jobs:
           hops=0
           while [ -n "$next_url" ]; do
             status=$(curl -sS -o resp.json -D headers.txt -w "%{http_code}" \
+              --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-connrefused \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -86,7 +91,10 @@ jobs:
             next_url=$(tr -d '\r' < headers.txt | grep -i '^link:' \
               | sed -n 's/.*<\([^>]*\)>; rel="next".*/\1/p' | head -1 || true)
             hops=$((hops + 1))
-            if [ "$hops" -gt 30 ]; then echo "Hit pagination hop cap"; break; fi
+            if [ "$hops" -gt 30 ]; then
+              echo "Hit pagination hop cap before reaching the end; refusing to post partial results." >&2
+              exit 1
+            fi
           done
           jq --arg cutoff "$cutoff" \
             '[.[] | select(.fixed_at != null and .fixed_at >= $cutoff)]' \
@@ -196,7 +204,10 @@ jobs:
         env:
           HOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
+          # No --retry here: the Slack webhook POST is not idempotent, so a retry
+          # after a request that actually landed could double-post. Timeouts only.
           curl -sS -o response.txt -w "status=%{http_code}\n" \
+            --connect-timeout 10 --max-time 30 \
             -H 'Content-Type: application/json' \
             --data @payload.json "$HOOK"
           body=$(cat response.txt)
