@@ -2,9 +2,10 @@ name: Dependabot daily (new + fixed) → Slack
 
 on:
   schedule:
-    # Daily 09:00 UTC — what opened and what got fixed in the last day. The
-    # weekly roll-up digest (dependabot-slack-digest.yml) runs on Mondays.
-    - cron: '0 9 * * *'
+    # Daily 07:30 UTC = 08:30 UK/BST (summer); 07:30 local in winter (GMT) —
+    # GitHub cron is UTC-only. :30 avoids the top-of-hour scheduler congestion
+    # that delayed the 09:00 run. Weekly roll-up runs Mondays (dependabot-slack-digest.yml).
+    - cron: '30 7 * * *'
   workflow_dispatch:
 
 permissions:
