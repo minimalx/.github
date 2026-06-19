@@ -107,6 +107,29 @@ def main():
             if bootloader_prefix:
                 if not bootloader_tags:
                     print("Bootloader tags:   (none pointing at commit)")
+                    # Bootloaders change rarely, so a release may not re-tag the
+                    # bootloader at the app commit. Fall back to the most recent
+                    # bootloader tag reachable from HEAD (the last valid one).
+                    nearest_boot_tag = run_git(
+                        [
+                            "-C",
+                            path,
+                            "describe",
+                            "--tags",
+                            "--abbrev=0",
+                            "--match",
+                            f"{bootloader_prefix}*",
+                            "HEAD",
+                        ],
+                        check=False,
+                    )
+                    if nearest_boot_tag:
+                        print(f"Nearest bootloader tag: {nearest_boot_tag}")
+                        bootloader_version = extract_semver(nearest_boot_tag)
+                        if not bootloader_version:
+                            print(
+                                f"Warning: could not parse bootloader version from tag '{nearest_boot_tag}'"
+                            )
                 else:
                     print("Bootloader tags:")
                     for t in bootloader_tags:
