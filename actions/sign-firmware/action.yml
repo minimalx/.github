@@ -34,14 +34,20 @@ runs:
       shell: bash
       env:
         FIRMWARE_SIGNING_PRIVATE_KEY: ${{ inputs.private-key }}
+        # Caller inputs go through env: instead of being spliced into the
+        # script, because the signing key is in scope here (GAP-16).
+        INPUT_HEX_PATH: ${{ inputs.hex-path }}
+        INPUT_APP_START: ${{ inputs.app-start }}
+        INPUT_APP_END: ${{ inputs.app-end }}
+        INPUT_OUTPUT_PATH: ${{ inputs.output-path }}
       run: |
         set -euo pipefail
         args=(
-          --hex "${{ inputs.hex-path }}"
-          --app-start "${{ inputs.app-start }}"
-          --app-end "${{ inputs.app-end }}"
+          --hex "$INPUT_HEX_PATH"
+          --app-start "$INPUT_APP_START"
+          --app-end "$INPUT_APP_END"
         )
-        if [ -n "${{ inputs.output-path }}" ]; then
-          args+=(--output "${{ inputs.output-path }}")
+        if [ -n "$INPUT_OUTPUT_PATH" ]; then
+          args+=(--output "$INPUT_OUTPUT_PATH")
         fi
         sh "$GITHUB_ACTION_PATH/run.sh" "${args[@]}"

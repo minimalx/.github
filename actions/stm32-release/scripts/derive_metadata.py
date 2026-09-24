@@ -28,6 +28,12 @@ def append_to_github_env(env_vars: dict) -> None:
     if not github_env:
         raise RuntimeError("GITHUB_ENV is not set; cannot export variables.")
 
+    # A newline in a value would let it append arbitrary KEY=VALUE lines
+    # (e.g. BASH_ENV) to GITHUB_ENV. Validate everything before writing anything.
+    for key, value in env_vars.items():
+        if "\n" in value or "\r" in value:
+            raise ValueError(f"{key} must be a single line")
+
     github_env_path = Path(github_env)
     with github_env_path.open("a", encoding="utf-8") as f:
         for key, value in env_vars.items():
@@ -66,7 +72,11 @@ def main(argv: list[str]) -> int:
         "NAMESPACE": namespace,
     }
 
-    append_to_github_env(env_vars)
+    try:
+        append_to_github_env(env_vars)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     # Match the original log line
     print(

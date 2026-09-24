@@ -36,17 +36,25 @@ runs:
 
     - name: Generate release JSON
       shell: bash
-      run: python3 "${GITHUB_ACTION_PATH}/generate_json_release.py" -o "${{ inputs.output-file }}" -e "${{ inputs.ext-versions}}"
+      env:
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_EXT_VERSIONS: ${{ inputs.ext-versions }}
+      run: python3 "${GITHUB_ACTION_PATH}/generate_json_release.py" -o "$INPUT_OUTPUT_FILE" -e "$INPUT_EXT_VERSIONS"
 
     - name: Generate ordered firmware-upgrade manifest
       if: ${{ inputs.firmware-upgrade-layout != '' && inputs.firmware-upgrade-output-file != '' }}
       shell: bash
+      env:
+        INPUT_LAYOUT_FILE: ${{ inputs.firmware-upgrade-layout }}
+        INPUT_VERSION: ${{ inputs.firmware-upgrade-version }}
+        INPUT_EXT_VERSIONS: ${{ inputs.ext-versions }}
+        INPUT_OUTPUT_FILE: ${{ inputs.firmware-upgrade-output-file }}
       run: |
         python3 "${GITHUB_ACTION_PATH}/generate_firmware_upgrade_manifest.py" \
-          --layout-file "${{ inputs.firmware-upgrade-layout }}" \
-          --version "${{ inputs.firmware-upgrade-version }}" \
-          --ext-versions "${{ inputs.ext-versions }}" \
-          --output "${{ inputs.firmware-upgrade-output-file }}"
+          --layout-file "$INPUT_LAYOUT_FILE" \
+          --version "$INPUT_VERSION" \
+          --ext-versions "$INPUT_EXT_VERSIONS" \
+          --output "$INPUT_OUTPUT_FILE"
 
     - name: Upload submodule_versions.txt artifact
       uses: actions/upload-artifact@v4
