@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -105,13 +106,19 @@ def write_github_output(body: str) -> None:
         print("GITHUB_OUTPUT is not set; cannot export step output.", file=sys.stderr)
         return
 
+    # Random delimiter: a PR body containing a line "EOF" must not be able to
+    # end the value early and append extra step outputs.
+    delimiter = f"BODY_EOF_{secrets.token_hex(16)}"
+    while delimiter in body:
+        delimiter = f"BODY_EOF_{secrets.token_hex(16)}"
+
     out_file = Path(output_path)
     with out_file.open("a", encoding="utf-8") as f:
-        f.write("body<<EOF\n")
+        f.write(f"body<<{delimiter}\n")
         f.write(body)
         if not body.endswith("\n"):
             f.write("\n")
-        f.write("EOF\n")
+        f.write(f"{delimiter}\n")
 
 
 def main(argv: list[str]) -> int:
