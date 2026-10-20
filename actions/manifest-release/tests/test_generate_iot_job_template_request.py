@@ -127,7 +127,7 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
         self.assertEqual(data["description"], "P4-1.X firmware-upgrade manifest v1.3.1")
         self.assertEqual(
             data["document"],
-            json.dumps(manifest, separators=(",", ":"), sort_keys=True),
+            json.dumps(manifest, separators=(",", ":")),
         )
         self.assertNotIn("documentSource", data)
         self.assertEqual(
@@ -151,6 +151,30 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
                 },
             ],
         )
+
+    def test_render_preserves_board_and_field_order(self):
+        manifest = {
+            "operation": "firmware-upgrade",
+            "manifestVersion": "v1.3.1",
+            "vehicleType": "P4-2.X",
+            "boards": {
+                "AVA": {"boot": "2.0.5", "app": "2.4.5"},
+                "SMM": {"boot": "3.1.7", "app": "3.3.2"},
+                "PMU": {"boot": "0.1.11", "app": "1.1.6"},
+                "BCU": {"boot": "2.2.11", "app": "4.4.7"},
+                "TCU": {"app": "2.21.0", "boot": None},
+            },
+        }
+
+        result, output_text = self.run_render(inline_document_body=manifest)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        document = json.loads(json.loads(output_text)["document"])
+        self.assertEqual(
+            list(document["boards"]), ["AVA", "SMM", "PMU", "BCU", "TCU"]
+        )
+        self.assertEqual(list(document["boards"]["BCU"]), ["boot", "app"])
+        self.assertEqual(list(document["boards"]["TCU"]), ["app", "boot"])
 
     def test_render_supports_legacy_document_source_requests(self):
         result, output_text = self.run_render()
@@ -221,7 +245,7 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
         expected = {
             "jobTemplateId": "p4_2_x_fw_upgrade_v1_3_1",
             "description": "P4-2.X firmware-upgrade manifest v1.3.1",
-            "document": "{\"boards\":{\"BCU\":{\"app\":\"1.0.0\",\"boot\":\"1.0.1\"}},\"operation\":\"firmware-upgrade\"}",
+            "document": "{\"operation\":\"firmware-upgrade\",\"boards\":{\"BCU\":{\"boot\":\"1.0.1\",\"app\":\"1.0.0\"}}}",
             "presignedUrlConfig": {
                 "roleArn": "arn:aws:iam::303188940251:role/iot-jobs-firmware-manifest-read-role"
             },
@@ -247,6 +271,28 @@ class GenerateIotJobTemplateRequestTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("matches expected request", result.stdout)
+
+    def test_compare_fails_when_inline_document_key_order_differs(self):
+        expected = {
+            "jobTemplateId": "p4_2_x_fw_upgrade_v1_3_1",
+            "description": "P4-2.X firmware-upgrade manifest v1.3.1",
+            "document": "{\"operation\":\"firmware-upgrade\",\"boards\":{\"BCU\":{\"boot\":\"1.0.1\",\"app\":\"1.0.0\"}}}",
+            "presignedUrlConfig": {"roleArn": "arn:aws:iam::303188940251:role/example"},
+            "timeoutConfig": {"inProgressTimeoutInMinutes": 15},
+        }
+        actual = {
+            "jobTemplateId": "p4_2_x_fw_upgrade_v1_3_1",
+            "description": "P4-2.X firmware-upgrade manifest v1.3.1",
+            # A template created before order was preserved: keys sorted.
+            "document": "{\"boards\":{\"BCU\":{\"app\":\"1.0.0\",\"boot\":\"1.0.1\"}},\"operation\":\"firmware-upgrade\"}",
+            "presignedUrlConfig": {"roleArn": "arn:aws:iam::303188940251:role/example"},
+            "timeoutConfig": {"inProgressTimeoutInMinutes": 15},
+        }
+
+        result = self.run_compare(expected=expected, actual=actual)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("document mismatch", result.stderr)
 
     def test_compare_fails_for_mismatched_document_source(self):
         expected = {
