@@ -126,7 +126,10 @@ def build_document_source(
 
 
 def canonicalize_json_value(value) -> str:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+    # Key order is significant: the OTA service flashes boards, and each
+    # board's app/boot steps, in the order the job document lists them (see
+    # the layout's boardSequence and fieldOrder). Compact, never sorted.
+    return json.dumps(value, separators=(",", ":"))
 
 
 def canonicalize_document_string(value: str, *, field_name: str) -> str:
