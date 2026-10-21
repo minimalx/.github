@@ -62,11 +62,17 @@ runs:
     - name: Derive build configuration
       id: derive-build-config
       shell: bash
+      env:
+        PROJECT_TARGET: ${{ inputs.project-target }}
       run: |
-        project_target="${{ inputs.project-target }}"
-        build_config="${project_target##*/}"
-        echo "build_configuration=$build_config" >> "$GITHUB_OUTPUT"
-        echo "BUILD_CONFIGURATION=$build_config" >> "$GITHUB_ENV"
+        set -euo pipefail
+        build_config="${PROJECT_TARGET##*/}"
+        # A newline would let the value append extra lines to GITHUB_OUTPUT/GITHUB_ENV.
+        case "$build_config" in
+          *$'\n'*|*$'\r'*) echo "::error::project-target must be a single line" >&2; exit 1 ;;
+        esac
+        printf 'build_configuration=%s\n' "$build_config" >> "$GITHUB_OUTPUT"
+        printf 'BUILD_CONFIGURATION=%s\n' "$build_config" >> "$GITHUB_ENV"
 
     # Upload artifacts produced for the derived build configuration.
     - name: Upload firmware artifacts
