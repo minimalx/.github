@@ -47,21 +47,35 @@ runs:
         path: release/artifacts
         merge-multiple: true
 
+    # Untrusted values (tag, names, PR body) are passed via env: and referenced
+    # as quoted "$VAR" so the shell never parses them as code (GAP-16).
     - name: Derive version and filenames
       shell: bash
+      env:
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_PACKAGE_NAME: ${{ inputs['package-name'] }}
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
       run: |
         set -euo pipefail
-        python "${GITHUB_ACTION_PATH}/scripts/derive_metadata.py" "${{ inputs.tag }}" "${{ inputs['package-name'] }}" "${{ inputs.namespace }}"
+        python "${GITHUB_ACTION_PATH}/scripts/derive_metadata.py" "$INPUT_TAG" "$INPUT_PACKAGE_NAME" "$INPUT_NAMESPACE"
 
     - name: Derive release name
       shell: bash
+      env:
+        INPUT_RELEASE_NAME: ${{ inputs.release-name }}
       run: |
         set -euo pipefail
-        if [ -n "${{ inputs.release-name }}" ]; then
-          echo "RELEASE_NAME=${{ inputs.release-name }} ${{ env.VERSION }}" >> "$GITHUB_ENV"
+        # VERSION and PACKAGE were exported to the job env by derive_metadata.py.
+        if [ -n "$INPUT_RELEASE_NAME" ]; then
+          release_name="$INPUT_RELEASE_NAME $VERSION"
         else
-          echo "RELEASE_NAME=${{ env.PACKAGE }} ${{ env.VERSION }}" >> "$GITHUB_ENV"
+          release_name="$PACKAGE $VERSION"
         fi
+        # A newline would let the value append extra KEY=VALUE lines to GITHUB_ENV.
+        case "$release_name" in
+          *$'\n'*|*$'\r'*) echo "::error::release name must be a single line" >&2; exit 1 ;;
+        esac
+        printf 'RELEASE_NAME=%s\n' "$release_name" >> "$GITHUB_ENV"
 
     - name: Create firmware bundle (.zip)
       shell: bash
@@ -90,7 +104,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_PROD }}"
+        python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "$AWS_STM32_REPO_PROD"
 
     - name: Extract PR summary for release body (PROD)
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -98,16 +112,20 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
+        INPUT_TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
-        python "${GITHUB_ACTION_PATH}/scripts/extract_release_body_from_pr.py" --tag "${{ inputs.tag }}"
-        
+        python "${GITHUB_ACTION_PATH}/scripts/extract_release_body_from_pr.py" --tag "$INPUT_TAG"
+
     - name: Print release notes
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       shell: bash
+      env:
+        # PR body is attacker-controllable text: never interpolate it into run:.
+        RELEASE_BODY: ${{ steps.release-body.outputs.body }}
       run: |
         echo "===== RELEASE NOTES BEGIN ====="
-        printf "%s\n" "${{ steps.release-body.outputs.body }}"
+        printf '%s\n' "$RELEASE_BODY"
         echo "===== RELEASE NOTES END ====="
 
     - name: Create/Update GitHub Release (PROD)
@@ -138,7 +156,7 @@ runs:
       run: |
         set -euo pipefail
         output=""
-        if ! output=$(python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "${{ env.AWS_STM32_REPO_DEV }}" 2>&1); then
+        if ! output=$(python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "$AWS_STM32_REPO_DEV" 2>&1); then
           if printf '%s' "$output" | grep -q "Cannot update existing generic package version"; then
             echo "Artifact already exists, skipping"
             exit 0
