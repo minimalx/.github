@@ -14,7 +14,7 @@ inputs:
 
   # --- Toggle CodeArtifact lookup (DEV) ---
   use-codeartifact:
-    description: "If 'true', assume AWS role on PRs and query DEV CodeArtifact to pick next devN"
+    description: "If 'true', assume AWS role on PRs and branch pushes and query DEV CodeArtifact to pick next devN"
     required: false
     default: "true"
 
@@ -70,9 +70,9 @@ runs:
         python -m pip install --upgrade pip
         pip install packaging
 
-    # ====== AWS Login (DEV) for PRs ======
+    # ====== AWS Login (DEV) for PRs and pushes to branches other than main ======
     - name: Configure AWS (DEV) for CodeArtifact lookup
-      if: ${{ inputs.use-codeartifact == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ inputs.use-codeartifact == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main')) }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: ${{ inputs.role-dev }}
