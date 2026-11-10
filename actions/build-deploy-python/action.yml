@@ -109,7 +109,7 @@ runs:
 
     # ========== DEV (PRs and pushes to branches other than main) ==========
     - name: Configure AWS credentials (DEV)
-      if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
+      if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: ${{ env.AWS_CODEARTIFACT_PUBLISHER }}
@@ -117,7 +117,7 @@ runs:
         role-duration-seconds: 900  # 30m
 
     - name: Login Twine to CodeArtifact (DEV)
-      if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
+      if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') }}
       shell: bash
       run: |
         aws codeartifact login \

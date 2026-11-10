@@ -269,14 +269,14 @@ def detect_ci_context() -> tuple[bool, bool]:
     """
     Returns (is_dev_build, is_push_main). A PR and a push to any branch other than
     main (develop) are development builds: they get a .devN version for the DEV
-    repository. Only a push to main is a release.
+    repository. A push to main is a release, and a tag push is handled as before.
     """
     event = os.environ.get("GITHUB_EVENT_NAME", "")
     ref = os.environ.get("GITHUB_REF", "")
     ref_name = os.environ.get("GITHUB_REF_NAME", "")
     is_pr = event.startswith("pull_request") or bool(os.environ.get("GITHUB_HEAD_REF"))
     is_push_main = (event == "push") and (ref == "refs/heads/main" or ref_name == "main")
-    is_branch_push = (event == "push") and not is_push_main
+    is_branch_push = (event == "push") and ref.startswith("refs/heads/") and not is_push_main
     return is_pr or is_branch_push, is_push_main
 
 def write_github_output(tag: str):

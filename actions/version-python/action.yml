@@ -72,7 +72,7 @@ runs:
 
     # ====== AWS Login (DEV) for PRs and pushes to branches other than main ======
     - name: Configure AWS (DEV) for CodeArtifact lookup
-      if: ${{ inputs.use-codeartifact == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')) }}
+      if: ${{ inputs.use-codeartifact == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main')) }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: ${{ inputs.role-dev }}
