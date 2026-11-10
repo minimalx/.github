@@ -267,14 +267,17 @@ def find_package_inits(src_dir: Path):
 
 def detect_ci_context() -> tuple[bool, bool]:
     """
-    Returns (is_pr, is_push_main)
+    Returns (is_dev_build, is_push_main). A PR and a push to any branch other than
+    main (develop) are development builds: they get a .devN version for the DEV
+    repository. Only a push to main is a release.
     """
     event = os.environ.get("GITHUB_EVENT_NAME", "")
     ref = os.environ.get("GITHUB_REF", "")
     ref_name = os.environ.get("GITHUB_REF_NAME", "")
     is_pr = event.startswith("pull_request") or bool(os.environ.get("GITHUB_HEAD_REF"))
     is_push_main = (event == "push") and (ref == "refs/heads/main" or ref_name == "main")
-    return is_pr, is_push_main
+    is_branch_push = (event == "push") and not is_push_main
+    return is_pr or is_branch_push, is_push_main
 
 def write_github_output(tag: str):
     gh_output = os.environ.get("GITHUB_OUTPUT")
@@ -295,7 +298,7 @@ def main():
         print("No packages found under src/*/__init__.py", file=sys.stderr)
         sys.exit(1)
 
-    is_pr, is_push_main = detect_ci_context()
+    is_dev_build, is_push_main = detect_ci_context()
 
     failures = []
     rows = []  # (pkg, main_v, pr_v, ok, base_str)
@@ -312,7 +315,7 @@ def main():
         proposed_base = Version(f"{pr_v.major}.{pr_v.minor}.{pr_v.micro}")
         main_base = Version(f"{main_v.major}.{main_v.minor}.{main_v.micro}")
 
-        if is_pr:
+        if is_dev_build:
             # PR rules vs tag-derived main_v
             if main_v.is_prerelease and main_v.dev is not None:
                 ok = (proposed_base == main_base)
@@ -344,7 +347,7 @@ def main():
         if ok and base_ok:
             proposed_bases.add(base_ok)
         else:
-            if is_pr:
+            if is_dev_build:
                 failures.append(
                     f"[{pkg}] Invalid version relative to latest tag on main={main_v}: found {pr_v}. "
                     f"PRs may: (a) match main’s base if no final tag exists yet, "
@@ -376,7 +379,7 @@ def main():
     # Agreed base
     base = next(iter(proposed_bases))
 
-    if is_pr:
+    if is_dev_build:
         candidates = candidate_codeartifact_package_names(ROOT, package_inits)
         log(f"Package name candidates for CodeArtifact: {candidates}")
         devn = next_dev_number_from_codeartifact(base, candidates)
