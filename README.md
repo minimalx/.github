@@ -117,8 +117,9 @@ Pin third‑party actions where practical.
 A push to `develop` can publish a development build that names exactly one commit:
 
 * `version-c` with `dev-build-number: first-parent` versions a push to a non-release
-  branch as `X.Y.Z-devN`, where N is the first-parent commit count since the newest
-  reachable `<prefix>X.Y.Z` tag. Every develop merge gets its own N. It fails, rather
+  branch as `X.Y.Z-devN`, where N is the commit's first-parent depth (commits back
+  to the root along first parents). N only rises along develop, including across
+  back-merges, so every develop merge gets its own N. It fails, rather
   than reuse or under-number a version, when a newer release is not merged back into
   the branch (merge `main` back into `develop` after each release). It outputs
   `dev_tag` = `dev/<prefix>X.Y.Z-devN`.

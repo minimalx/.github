@@ -30,9 +30,9 @@ inputs:
     description: >-
       How a push to a non-release branch numbers its -devN build.
       "increment" (default) keeps semantic-version's ${increment}, which can repeat
-      across commits. "first-parent" makes N the first-parent commit count since the
-      newest reachable release tag, so each develop merge has its own version, and
-      refuses when a newer release is not merged back (see dev_version.py).
+      across commits. "first-parent" makes N the commit's first-parent depth, which
+      only rises along develop (back-merges included), so each develop merge has its
+      own version; it refuses when a newer release is not merged back (see dev_version.py).
     required: false
     default: "increment"
 

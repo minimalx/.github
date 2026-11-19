@@ -68,7 +68,7 @@ class DevVersionTest(unittest.TestCase):
             self.repo.checkout("develop")
             self.repo.merge(f"feature/{i}", f"Merge feature {i}")
             seen.add(self.version()["version"])
-        self.assertEqual(seen, {"1.0.1-dev1", "1.0.1-dev2", "1.0.1-dev3", "1.0.1-dev4"})
+        self.assertEqual(seen, {"1.0.1-dev2", "1.0.1-dev3", "1.0.1-dev4", "1.0.1-dev5"})
 
     def test_same_commit_gives_the_same_version(self):
         self.repo.commit()
@@ -77,10 +77,10 @@ class DevVersionTest(unittest.TestCase):
     def test_outputs_and_dev_tag_namespace(self):
         self.repo.commit()
         values = self.version()
-        self.assertEqual(values["version"], "1.0.1-dev1")
-        self.assertEqual(values["version_tag"], "BCU_APP_v1.0.1-dev1")
-        self.assertEqual(values["dev_tag"], "dev/BCU_APP_v1.0.1-dev1")
-        self.assertEqual(values["build"], "1")
+        self.assertEqual(values["version"], "1.0.1-dev2")
+        self.assertEqual(values["version_tag"], "BCU_APP_v1.0.1-dev2")
+        self.assertEqual(values["dev_tag"], "dev/BCU_APP_v1.0.1-dev2")
+        self.assertEqual(values["build"], "2")
 
     def test_release_not_merged_back_is_refused(self):
         self.repo.commit("work for 1.0.1")
@@ -100,7 +100,7 @@ class DevVersionTest(unittest.TestCase):
         self.repo.checkout("develop")
         self.repo.merge("main", "Back-merge main")
         self.repo.commit("next work")
-        self.assertEqual(self.version(base="1.0.2")["version"], "1.0.2-dev2")
+        self.assertEqual(self.version(base="1.0.2")["version"], "1.0.2-dev4")
 
     def test_dev_tags_and_other_prefixes_are_not_releases(self):
         self.repo.commit()
@@ -108,7 +108,27 @@ class DevVersionTest(unittest.TestCase):
         self.repo.tag("BCU_APP_v9.9.9-dev1")
         self.repo.tag("BCU_BL_v9.9.9")
         self.repo.commit()
-        self.assertEqual(self.version()["version"], "1.0.1-dev2")
+        self.assertEqual(self.version()["version"], "1.0.1-dev3")
+
+    def test_back_merge_never_reuses_a_number(self):
+        # develop R-A-B-C-D-M: B is released as 1.0.1 through main, C is (MINOR),
+        # M merges main back. The base stays 1.1.0, and M must not reuse C's number.
+        self.repo.commit("A")
+        self.repo.commit("B")
+        self.repo.checkout("main")
+        self.repo.merge("develop", "Release")
+        self.repo.tag("BCU_APP_v1.0.1")
+        self.repo.checkout("develop")
+        seen = []
+        self.repo.commit("C (MINOR)")
+        seen.append(self.version(base="1.1.0")["version"])
+        self.repo.commit("D")
+        seen.append(self.version(base="1.1.0")["version"])
+        self.repo.merge("main", "Back-merge main")
+        seen.append(self.version(base="1.1.0")["version"])
+        self.assertEqual(len(set(seen)), 3, seen)
+        builds = [int(v.rsplit("dev", 1)[1]) for v in seen]
+        self.assertEqual(builds, sorted(builds), seen)
 
     def test_release_commit_is_not_a_dev_build(self):
         self.repo.checkout("main")

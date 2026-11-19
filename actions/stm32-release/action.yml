@@ -190,12 +190,18 @@ runs:
           echo "::error::${DEV_TAG} is already on ${existing}, not ${SHA}: two commits produced ${VERSION}" >&2
           exit 1
         fi
-        if aws codeartifact describe-package-version \
+        # Only a confirmed "not found" lets the claim go ahead: access, throttling or
+        # any other error stops the run rather than being read as "absent".
+        if lookup=$(aws codeartifact describe-package-version \
              --domain "$AWS_DOMAIN" --domain-owner "$AWS_DOMAIN_OWNER" \
              --repository "$AWS_STM32_REPO_DEV" --format generic \
              --namespace "$NAMESPACE" --package "$PACKAGE" --package-version "$VERSION" \
-             >/dev/null 2>&1; then
+             2>&1 >/dev/null); then
           echo "::error::${NAMESPACE}/${PACKAGE} ${VERSION} is already in ${AWS_STM32_REPO_DEV} but no ${DEV_TAG} says which commit built it" >&2
+          exit 1
+        elif ! printf '%s' "$lookup" | grep -q "ResourceNotFoundException"; then
+          printf '%s\n' "$lookup" >&2
+          echo "::error::could not check whether ${NAMESPACE}/${PACKAGE} ${VERSION} is in ${AWS_STM32_REPO_DEV}; not claiming ${DEV_TAG}" >&2
           exit 1
         fi
         gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${DEV_TAG}" -f sha="$SHA" >/dev/null
@@ -207,13 +213,20 @@ runs:
       shell: bash
       env:
         DEV_TAG_STATE: ${{ steps.dev-tag.outputs.state }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        DEV_TAG: ${{ inputs.dev-tag }}
+        REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
         output=""
         if ! output=$(python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "$AWS_STM32_REPO_DEV" 2>&1); then
           if printf '%s' "$output" | grep -q "Cannot update existing generic package version"; then
             if [ "$DEV_TAG_STATE" = "created" ]; then
-              echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it" >&2
+              # Someone else holds this version: take back the claim, so a re-run
+              # does not find "its own" tag and pass the collision off as success.
+              gh api -X DELETE "repos/${REPO}/git/refs/tags/${DEV_TAG}" >/dev/null \
+                || echo "::warning::could not delete ${DEV_TAG}; delete it by hand before re-running" >&2
+              echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it; ${DEV_TAG} removed" >&2
               exit 1
             fi
             echo "Artifact already exists, skipping"

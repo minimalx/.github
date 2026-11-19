@@ -2,10 +2,13 @@
 """Give a development build a version that names exactly one commit.
 
 A development build is X.Y.Z-devN, where X.Y.Z is the next release that
-paulhatch/semantic-version computed and N counts the first-parent commits from
-the newest reachable release tag to the built commit. Along develop's
-first-parent line every commit gets a different N, so two builds of different
-code can never share a version (the old ${increment} could).
+paulhatch/semantic-version computed and N is the built commit's first-parent
+depth: the number of commits on its first-parent line back to the root. Each
+develop commit is one deeper than the one before it, so N only ever rises along
+develop and two builds of different code can never share a version (the old
+${increment} could). N does not restart at a release tag: a back-merge moves the
+newest reachable tag past commits already numbered, and counting from it would
+hand out a number again.
 
 It refuses, rather than guesses, when:
   * the history is shallow (N would be wrong);
@@ -90,9 +93,7 @@ def dev_version(repo: Path, prefix: str, base: str, commit: str = "HEAD") -> dic
         base_tag = reachable[0][1]
         if _git(repo, "rev-parse", f"{base_tag}^{{commit}}") == head:
             raise DevVersionError(f"{head[:12]} is the release {base_tag}, not a development build")
-        build = int(_git(repo, "rev-list", "--first-parent", "--count", f"{base_tag}..{head}"))
-    else:
-        build = int(_git(repo, "rev-list", "--first-parent", "--count", head))
+    build = int(_git(repo, "rev-list", "--first-parent", "--count", head))
 
     version = f"{base}-dev{build}"
     return {
