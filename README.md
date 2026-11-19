@@ -116,8 +116,8 @@ Pin third‑party actions where practical.
 
 A push to `develop` can publish a development build that names exactly one commit:
 
-* `version-c` with `dev-build-number: first-parent` versions a push to a non-release
-  branch as `X.Y.Z-devN`, where N is the commit's first-parent depth (commits back
+* `version-c` with `dev-build-number: first-parent` versions a push to `dev-branch`
+  (default `develop`) as `X.Y.Z-devN`, where N is the commit's first-parent depth (commits back
   to the root along first parents). N only rises along develop, including across
   back-merges, so every develop merge gets its own N. It fails, rather
   than reuse or under-number a version, when a newer release is not merged back into
@@ -125,8 +125,9 @@ A push to `develop` can publish a development build that names exactly one commi
   `dev_tag` = `dev/<prefix>X.Y.Z-devN`.
 * `stm32-release` with `dev-tag: ${{ needs.<version job>.outputs.dev_tag }}` tags the
   built commit with it before publishing to the DEV repository. The job needs
-  `contents: write`. A tag already on another commit, or a DEV version nobody tagged,
-  fails the run.
+  `contents: write`, and the workflow must not run two publishes of the same branch
+  at once (`concurrency: { group: <workflow>-${{ github.ref }}, cancel-in-progress: false }`).
+  A tag already on another commit, or a DEV version nobody tagged, fails the run.
 
 The `dev/` namespace keeps these tags out of release lookups (`refs/tags/<prefix>*`,
 `git describe --match '<prefix>*'`). Both inputs default to the old behaviour, so

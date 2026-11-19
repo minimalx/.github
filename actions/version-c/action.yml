@@ -36,6 +36,14 @@ inputs:
     required: false
     default: "increment"
 
+  dev-branch:
+    description: >-
+      The one branch whose pushes "first-parent" numbers (default develop). First-parent
+      depth is unique only along a single branch, so other non-release branches keep
+      "increment" and must not publish dev builds.
+    required: false
+    default: "develop"
+
 outputs:
   version:
     description: "Calculated semantic version"
@@ -76,12 +84,14 @@ runs:
           *) echo "::error::dev-build-number must be increment or first-parent, not '$MODE'" >&2; exit 1 ;;
         esac
 
-    # Pushes only: pull requests build the temporary merge commit, which is on no branch.
+    # Pushes to dev-branch only: pull requests build the temporary merge commit, which is
+    # on no branch, and first-parent depth is unique only along one branch.
     - name: Development build version (first-parent)
       id: dev
       if: >-
         inputs.dev-build-number == 'first-parent' &&
         github.event_name == 'push' &&
+        github.ref_name == inputs.dev-branch &&
         !contains(inputs.release-branches, github.ref_name) &&
         steps.version.outputs.changed == 'true'
       shell: bash

@@ -31,7 +31,10 @@ inputs:
       name (dev/<prefix><version>, from version-c's dev_tag output) before publishing
       to the DEV repository. The tag is claimed first: a tag on another commit, or a
       DEV package version with no tag, fails the run instead of being skipped. Needs
-      contents: write for github_token. Empty (default) keeps the old behaviour.
+      contents: write for github_token. The caller must not run two publishes of the
+      same branch at once (concurrency: group per ref, cancel-in-progress: false):
+      an overlapping run's collision cleanup could remove the tag of the run that
+      published. Empty (default) keeps the old behaviour.
     required: false
     default: ""
 
