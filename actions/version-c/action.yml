@@ -26,16 +26,39 @@ inputs:
     required: false
     default: "main"
 
+  dev-build-number:
+    description: >-
+      How a push to a non-release branch numbers its -devN build.
+      "increment" (default) keeps semantic-version's ${increment}, which can repeat
+      across commits. "first-parent" makes N the commit's first-parent depth, which
+      only rises along develop (back-merges included), so each develop merge has its
+      own version; it refuses when a newer release is not merged back (see dev_version.py).
+    required: false
+    default: "increment"
+
+  dev-branch:
+    description: >-
+      The one branch whose pushes "first-parent" numbers (default develop). First-parent
+      depth is unique only along a single branch, so other non-release branches keep
+      "increment" and must not publish dev builds.
+    required: false
+    default: "develop"
+
 outputs:
   version:
     description: "Calculated semantic version"
-    value: ${{ steps.version.outputs.version }}
+    value: ${{ steps.final.outputs.version }}
   version_tag:
     description: "Calculated Git tag"
-    value: ${{ steps.version.outputs.version_tag }}
+    value: ${{ steps.final.outputs.version_tag }}
   changed:
     description: "Whether the version changed"
     value: ${{ steps.version.outputs.changed }}
+  dev_tag:
+    description: >-
+      dev/<prefix><version> for a first-parent development build, to tag the built
+      commit with; empty otherwise.
+    value: ${{ steps.dev.outputs.dev_tag }}
 
 runs:
   using: "composite"
@@ -51,17 +74,71 @@ runs:
         version_format: ${{ contains(inputs.release-branches, github.ref_name) && '${major}.${minor}.${patch}' || '${major}.${minor}.${patch}-dev${increment}' }}
         change_path: "${{ inputs.project-root }} global-canbus-definitions"
 
+    - name: Check dev-build-number
+      shell: bash
+      env:
+        MODE: ${{ inputs.dev-build-number }}
+      run: |
+        case "$MODE" in
+          increment|first-parent) ;;
+          *) echo "::error::dev-build-number must be increment or first-parent, not '$MODE'" >&2; exit 1 ;;
+        esac
+
+    # Pushes to dev-branch only: pull requests build the temporary merge commit, which is
+    # on no branch, and first-parent depth is unique only along one branch.
+    - name: Development build version (first-parent)
+      id: dev
+      if: >-
+        inputs.dev-build-number == 'first-parent' &&
+        github.event_name == 'push' &&
+        github.ref_type == 'branch' &&
+        !contains(inputs.release-branches, github.ref_name) &&
+        steps.version.outputs.changed == 'true'
+      shell: bash
+      env:
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        DEV_BRANCH: ${{ inputs.dev-branch }}
+        BASE: ${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}.${{ steps.version.outputs.patch }}
+      run: |
+        set -euo pipefail
+        # Compared here, not in if:, because expression == ignores case
+        # (Develop would match develop).
+        if [ "$GITHUB_REF_NAME" != "$DEV_BRANCH" ]; then
+          echo "${GITHUB_REF_NAME} is not ${DEV_BRANCH}: keeping semantic-version's numbering"
+          exit 0
+        fi
+        python3 "${GITHUB_ACTION_PATH}/dev_version.py" \
+          --tag-prefix "$TAG_PREFIX" --base "$BASE" --github-output
+
+    - name: Resolve version
+      id: final
+      shell: bash
+      env:
+        DEV_VERSION: ${{ steps.dev.outputs.version }}
+        DEV_VERSION_TAG: ${{ steps.dev.outputs.version_tag }}
+        SV_VERSION: ${{ steps.version.outputs.version }}
+        SV_VERSION_TAG: ${{ steps.version.outputs.version_tag }}
+      run: |
+        set -euo pipefail
+        if [ -n "$DEV_VERSION" ]; then
+          version="$DEV_VERSION"; version_tag="$DEV_VERSION_TAG"
+        else
+          version="$SV_VERSION"; version_tag="$SV_VERSION_TAG"
+        fi
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+        echo "version_tag=${version_tag}" >> "$GITHUB_OUTPUT"
+
     - name: Export Version to Env
       shell: bash
       run: |
-        echo "VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
-        echo "VERSION_TAG=${{ steps.version.outputs.version_tag }}" >> "$GITHUB_ENV"
+        echo "VERSION=${{ steps.final.outputs.version }}" >> "$GITHUB_ENV"
+        echo "VERSION_TAG=${{ steps.final.outputs.version_tag }}" >> "$GITHUB_ENV"
 
     - name: Generate version.h
       if: ${{ inputs.skip_header_generation != 'true' }}
       shell: bash
       run: |
         python3 "${GITHUB_ACTION_PATH}/generate_version_h.py" \
-          --version "${{ steps.version.outputs.version }}" \
+          --version "${{ steps.final.outputs.version }}" \
           --actor "${{ github.actor }}" \
           --root "${{ inputs.project-root }}"

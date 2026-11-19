@@ -25,6 +25,18 @@ inputs:
     description: "Override GitHub release name base (defaults to package-name)."
     required: false
     default: ""
+  dev-tag:
+    description: >-
+      Optional. On a push to a branch other than main, tag the built commit with this
+      name (dev/<prefix><version>, from version-c's dev_tag output) before publishing
+      to the DEV repository. The tag is claimed first: a tag on another commit, or a
+      DEV package version with no tag, fails the run instead of being skipped. Needs
+      contents: write for github_token. The caller must not run two publishes of the
+      same branch at once (concurrency: group per ref, cancel-in-progress: false):
+      an overlapping run's collision cleanup could remove the tag of the run that
+      published. Empty (default) keeps the old behaviour.
+    required: false
+    default: ""
 
 outputs:
   release-notes:
@@ -150,14 +162,78 @@ runs:
         aws-region:     ${{ env.AWS_REGION_CODEARTIFACT }}
         role-duration-seconds: 1800
 
+    # A dev tag names the one commit a DEV version was built from, so a manifest
+    # can pin it. Claimed before publishing: a re-run of the same commit finds its
+    # own tag; anything else that already holds the version stops the run.
+    - name: Claim dev tag (DEV)
+      id: dev-tag
+      if: ${{ inputs.dev-tag != '' && github.event_name == 'push' && github.ref != 'refs/heads/main' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        DEV_TAG: ${{ inputs.dev-tag }}
+        REPO: ${{ github.repository }}
+        SHA: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        # VERSION, PACKAGE and NAMESPACE were exported by derive_metadata.py.
+        if ! printf '%s' "$DEV_TAG" | grep -Eq '^dev/[A-Za-z0-9_.-]+$'; then
+          echo "::error::dev-tag '$DEV_TAG' must look like dev/<prefix><version>" >&2; exit 1
+        fi
+        case "$DEV_TAG" in
+          *"$VERSION") ;;
+          *) echo "::error::dev-tag '$DEV_TAG' does not end with the published version $VERSION" >&2; exit 1 ;;
+        esac
+        if existing=$(gh api "repos/${REPO}/git/ref/tags/${DEV_TAG}" --jq '.object.sha' 2>/dev/null); then
+          if [ "$existing" = "$SHA" ]; then
+            echo "${DEV_TAG} already on ${SHA}: re-run of the same build"
+            echo "state=existing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::${DEV_TAG} is already on ${existing}, not ${SHA}: two commits produced ${VERSION}" >&2
+          exit 1
+        fi
+        # Only a confirmed "not found" lets the claim go ahead: access, throttling or
+        # any other error stops the run rather than being read as "absent".
+        if lookup=$(aws codeartifact describe-package-version \
+             --domain "$AWS_DOMAIN" --domain-owner "$AWS_DOMAIN_OWNER" \
+             --repository "$AWS_STM32_REPO_DEV" --format generic \
+             --namespace "$NAMESPACE" --package "$PACKAGE" --package-version "$VERSION" \
+             2>&1 >/dev/null); then
+          echo "::error::${NAMESPACE}/${PACKAGE} ${VERSION} is already in ${AWS_STM32_REPO_DEV} but no ${DEV_TAG} says which commit built it" >&2
+          exit 1
+        elif ! printf '%s' "$lookup" | grep -q "ResourceNotFoundException"; then
+          printf '%s\n' "$lookup" >&2
+          echo "::error::could not check whether ${NAMESPACE}/${PACKAGE} ${VERSION} is in ${AWS_STM32_REPO_DEV}; not claiming ${DEV_TAG}" >&2
+          exit 1
+        fi
+        gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${DEV_TAG}" -f sha="$SHA" >/dev/null
+        echo "Tagged ${SHA} as ${DEV_TAG}"
+        echo "state=created" >> "$GITHUB_OUTPUT"
+
     - name: Publish generic package to CodeArtifact (DEV)
       if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
       shell: bash
+      env:
+        DEV_TAG_STATE: ${{ steps.dev-tag.outputs.state }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        DEV_TAG: ${{ inputs.dev-tag }}
+        REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
         output=""
         if ! output=$(python "${GITHUB_ACTION_PATH}/scripts/publish_codeartifact.py" --repository "$AWS_STM32_REPO_DEV" 2>&1); then
           if printf '%s' "$output" | grep -q "Cannot update existing generic package version"; then
+            if [ "$DEV_TAG_STATE" = "created" ]; then
+              # Someone else holds this version: take back the claim, so a re-run
+              # does not find "its own" tag and pass the collision off as success.
+              if gh api -X DELETE "repos/${REPO}/git/refs/tags/${DEV_TAG}" >/dev/null; then
+                echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it; ${DEV_TAG} removed" >&2
+              else
+                echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it, and ${DEV_TAG} could NOT be removed: delete the tag by hand before re-running, or a re-run will take the collision for its own build" >&2
+              fi
+              exit 1
+            fi
             echo "Artifact already exists, skipping"
             exit 0
           fi
