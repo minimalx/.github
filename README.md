@@ -112,6 +112,26 @@ workflow-templates/        # submodule root inside consumer repos
 
 Pin third‑party actions where practical.
 
+### Development builds you can pin in a manifest (opt-in)
+
+A push to `develop` can publish a development build that names exactly one commit:
+
+* `version-c` with `dev-build-number: first-parent` versions a push to a non-release
+  branch as `X.Y.Z-devN`, where N is the first-parent commit count since the newest
+  reachable `<prefix>X.Y.Z` tag. Every develop merge gets its own N. It fails, rather
+  than reuse or under-number a version, when a newer release is not merged back into
+  the branch (merge `main` back into `develop` after each release). It outputs
+  `dev_tag` = `dev/<prefix>X.Y.Z-devN`.
+* `stm32-release` with `dev-tag: ${{ needs.<version job>.outputs.dev_tag }}` tags the
+  built commit with it before publishing to the DEV repository. The job needs
+  `contents: write`. A tag already on another commit, or a DEV version nobody tagged,
+  fails the run.
+
+The `dev/` namespace keeps these tags out of release lookups (`refs/tags/<prefix>*`,
+`git describe --match '<prefix>*'`). Both inputs default to the old behaviour, so
+nothing changes for a repo until it opts in. Tests:
+`python3 -m unittest discover -s actions/version-c/tests`.
+
 ---
 
 ## Contributing
