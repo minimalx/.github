@@ -227,9 +227,11 @@ runs:
             if [ "$DEV_TAG_STATE" = "created" ]; then
               # Someone else holds this version: take back the claim, so a re-run
               # does not find "its own" tag and pass the collision off as success.
-              gh api -X DELETE "repos/${REPO}/git/refs/tags/${DEV_TAG}" >/dev/null \
-                || echo "::warning::could not delete ${DEV_TAG}; delete it by hand before re-running" >&2
-              echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it; ${DEV_TAG} removed" >&2
+              if gh api -X DELETE "repos/${REPO}/git/refs/tags/${DEV_TAG}" >/dev/null; then
+                echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it; ${DEV_TAG} removed" >&2
+              else
+                echo "::error::${VERSION} appeared in ${AWS_STM32_REPO_DEV} while this run was claiming it, and ${DEV_TAG} could NOT be removed: delete the tag by hand before re-running, or a re-run will take the collision for its own build" >&2
+              fi
               exit 1
             fi
             echo "Artifact already exists, skipping"

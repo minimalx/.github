@@ -91,15 +91,22 @@ runs:
       if: >-
         inputs.dev-build-number == 'first-parent' &&
         github.event_name == 'push' &&
-        github.ref_name == inputs.dev-branch &&
+        github.ref_type == 'branch' &&
         !contains(inputs.release-branches, github.ref_name) &&
         steps.version.outputs.changed == 'true'
       shell: bash
       env:
         TAG_PREFIX: ${{ inputs.tag-prefix }}
+        DEV_BRANCH: ${{ inputs.dev-branch }}
         BASE: ${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}.${{ steps.version.outputs.patch }}
       run: |
         set -euo pipefail
+        # Compared here, not in if:, because expression == ignores case
+        # (Develop would match develop).
+        if [ "$GITHUB_REF_NAME" != "$DEV_BRANCH" ]; then
+          echo "${GITHUB_REF_NAME} is not ${DEV_BRANCH}: keeping semantic-version's numbering"
+          exit 0
+        fi
         python3 "${GITHUB_ACTION_PATH}/dev_version.py" \
           --tag-prefix "$TAG_PREFIX" --base "$BASE" --github-output
 
