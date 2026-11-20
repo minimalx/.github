@@ -9,11 +9,41 @@ inputs:
   file:
     required: false
     default: "balena.yml"
+  tag-prefix:
+    description: 'Release tag prefix (default "TCU_STACK_v")'
+    required: false
+    default: "TCU_STACK_v"
+  dev-build-number:
+    description: >-
+      How a push to dev-branch is versioned. "none" (default) keeps the balena.yml
+      version. "first-parent" versions it X.Y.Z-devN: X.Y.Z from balena.yml, which
+      every pull request bumps so on develop it already names the next release, and N
+      the commit's first-parent depth, which only rises along develop, so each develop
+      merge has its own version. It refuses when a release tag at or above X.Y.Z is
+      not contained in the commit, when the commit is itself a release, or when the
+      history is shallow (see scripts/dev_build.py).
+    required: false
+    default: "none"
+  dev-branch:
+    description: >-
+      The one branch whose pushes "first-parent" numbers (default develop). First-parent
+      depth is unique only along a single branch, so other branches keep the plain
+      balena.yml version and must not publish dev builds.
+    required: false
+    default: "develop"
 
 outputs:
+  version:
+    description: "The version to build: balena.yml's X.Y.Z, or X.Y.Z-devN for a first-parent development build"
+    value: ${{ steps.final.outputs.version }}
   tag:
-    description: "Generated tag TCU_STACK_v<version>"
-    value: ${{ steps.extract-version.outputs.tag }}
+    description: "Generated tag <tag-prefix><version>"
+    value: ${{ steps.final.outputs.tag }}
+  dev_tag:
+    description: >-
+      dev/<tag-prefix>X.Y.Z-devN for a first-parent development build, to tag the built
+      commit with; empty otherwise.
+    value: ${{ steps.dev.outputs.dev_tag }}
 
 runs:
   using: "composite"
@@ -51,9 +81,49 @@ runs:
 
         echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-    - name: Format tag output
-      id: extract-version
+    - name: Check dev-build-number
       shell: bash
+      env:
+        MODE: ${{ inputs.dev-build-number }}
       run: |
-        TAG="TCU_STACK_v${VERSION}"
-        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        case "$MODE" in
+          none|first-parent) ;;
+          *) echo "::error::dev-build-number must be none or first-parent, not '$MODE'" >&2; exit 1 ;;
+        esac
+
+    # Pushes to dev-branch only: pull requests build the temporary merge commit, which is
+    # on no branch, and first-parent depth is unique only along one branch.
+    - name: Development build version (first-parent)
+      id: dev
+      if: >-
+        inputs.dev-build-number == 'first-parent' &&
+        github.event_name == 'push' &&
+        github.ref_type == 'branch'
+      shell: bash
+      env:
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        DEV_BRANCH: ${{ inputs.dev-branch }}
+        FILE: ${{ inputs.file }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: |
+        set -euo pipefail
+        # Compared here, not in if:, because expression == ignores case
+        # (Develop would match develop).
+        if [ "$GITHUB_REF_NAME" != "$DEV_BRANCH" ]; then
+          echo "${GITHUB_REF_NAME} is not ${DEV_BRANCH}: keeping the ${FILE} version"
+          exit 0
+        fi
+        python3 "${GITHUB_ACTION_PATH}/scripts/dev_build.py" \
+          --tag-prefix "$TAG_PREFIX" --file "$FILE" --commit "$HEAD_SHA" --github-output
+
+    - name: Resolve version
+      id: final
+      shell: bash
+      env:
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        DEV_VERSION: ${{ steps.dev.outputs.version }}
+      run: |
+        set -euo pipefail
+        version="${DEV_VERSION:-$VERSION}"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG_PREFIX}${version}" >> "$GITHUB_OUTPUT"

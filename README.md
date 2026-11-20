@@ -123,6 +123,13 @@ A push to `develop` can publish a development build that names exactly one commi
   than reuse or under-number a version, when a newer release is not merged back into
   the branch (merge `main` back into `develop` after each release). It outputs
   `dev_tag` = `dev/<prefix>X.Y.Z-devN`.
+* `version-balena` with `dev-build-number: first-parent` does the same for a balena
+  superproject such as TCUStack, where every pull request bumps `balena.yml` by hand:
+  a push to `dev-branch` is versioned `X.Y.Z-devN` with X.Y.Z from `balena.yml` and N
+  the first-parent depth, output as `version`, with `tag` = `<tag-prefix>X.Y.Z-devN`
+  and `dev_tag` = `dev/<tag-prefix>X.Y.Z-devN`. It refuses when `balena.yml` is not
+  above the latest release tag. The workflow writes `version` into `balena.yml` before
+  `balena push`, so the fleet release carries the same version as the tag.
 * `stm32-release` with `dev-tag: ${{ needs.<version job>.outputs.dev_tag }}` tags the
   built commit with it before publishing to the DEV repository. The job needs
   `contents: write`, and the workflow must not run two publishes of the same branch
@@ -132,7 +139,8 @@ A push to `develop` can publish a development build that names exactly one commi
 The `dev/` namespace keeps these tags out of release lookups (`refs/tags/<prefix>*`,
 `git describe --match '<prefix>*'`). Both inputs default to the old behaviour, so
 nothing changes for a repo until it opts in. Tests:
-`python3 -m unittest discover -s actions/version-c/tests`.
+`python3 -m unittest discover -s actions/version-c/tests` and
+`python3 -m unittest discover -s actions/version-balena/tests`.
 
 ---
 
