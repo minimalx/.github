@@ -102,9 +102,10 @@ def load_submodule_versions(path: Path) -> dict[str, dict[str, str]]:
 
             source = parts[0]
             entry: dict[str, str] = {}
-            if len(parts) >= 2:
+            # collect_submodules.py writes "-" for a missing field.
+            if len(parts) >= 2 and parts[1] != "-":
                 entry["app"] = parts[1]
-            if len(parts) >= 3:
+            if len(parts) >= 3 and parts[2] != "-":
                 entry["boot"] = parts[2]
 
             if source in versions:

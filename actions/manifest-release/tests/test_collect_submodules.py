@@ -72,7 +72,7 @@ class CollectSubmodulesTest(unittest.TestCase):
         # Pinned at the dev build: no release app version (the generator then
         # fails), and the bootloader is the last release, never the dev build.
         versions = self.collect()
-        self.assertEqual(versions["body-control-unit"], " 2.2.11")
+        self.assertEqual(versions["body-control-unit"], "- 2.2.11")
         self.assertEqual(versions["hmi"], "0.3.11")
         self.assertNotIn("workflow-templates", versions)
 
@@ -86,7 +86,24 @@ class CollectSubmodulesTest(unittest.TestCase):
     def test_release_refuses_a_suffixed_version(self):
         self.bcu.commit()
         self.bcu.tag("BCU_APP_v4.4.9-rc1")
-        self.assertEqual(self.collect()["body-control-unit"], " 2.2.11")
+        self.assertEqual(self.collect()["body-control-unit"], "- 2.2.11")
+
+    def test_release_refuses_any_suffix_or_trailing_version(self):
+        for tag in ("BCU_APP_v4.4.9_rc1", "BCU_APP_v4.4.9-rc.1.2.3", "BCU_APP_v4.4.9+b1"):
+            with self.subTest(tag=tag):
+                self.bcu.commit()
+                self.bcu.tag(tag)
+                self.assertEqual(self.collect()["body-control-unit"], "- 2.2.11")
+
+    def test_tags_without_a_version_do_not_hide_a_valid_one(self):
+        self.bcu.tag("build-marker", "a-marker")
+        self.assertEqual(
+            self.collect("--channel", "development")["body-control-unit"],
+            "4.4.9-dev98 2.2.12-dev98",
+        )
+        git(self.bcu.path, "checkout", "-q", "BCU_APP_v4.4.8")
+        self.bcu.tag("a-marker-on-release")
+        self.assertEqual(self.collect()["body-control-unit"], "4.4.8 2.2.11")
 
     def test_development_reads_dev_tags_with_their_suffix(self):
         versions = self.collect("--channel", "development")

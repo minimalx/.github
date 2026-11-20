@@ -31,10 +31,15 @@ BOOTLOADER_TAG_PREFIXES = {
 BOOTLOADER_TAG_SUBSTRING = "_BL_"
 DEV_TAG_NAMESPACE = "dev/"
 CHANNELS = ("release", "development")
-# The version must end the tag: "BCU_APP_v4.4.9-rc1" is not read as 4.4.9.
-_END = r"(?![0-9A-Za-z.+-])"
-SEMVER_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+" + _END)
-DEV_SEMVER_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-dev[0-9]+" + _END)
+# The version must be the whole end of the tag, after a name that doesn't end in a
+# digit, dot or sign: "BCU_APP_v4.4.9-rc1", "BCU_APP_v4.4.9_rc1" and
+# "BCU_APP_v4.4.9-rc.1.2.3" have no version, rather than 4.4.9 or 1.2.3.
+_START = r"(?<![0-9.+-])"
+RELEASE_TAG_PATTERN = re.compile(r"[^/]*" + _START + r"([0-9]+\.[0-9]+\.[0-9]+)")
+DEV_TAG_PATTERN = re.compile(r"dev/[^/]*" + _START + r"([0-9]+\.[0-9]+\.[0-9]+-dev[0-9]+)")
+# submodule_versions.txt is split on whitespace, so an empty field is written as
+# this, never as nothing: "bcu  2.2.11" would read the bootloader as the app.
+MISSING = "-"
 
 def run_git(args, cwd=None, check=True):
     """Run a git command and return stdout as string."""
@@ -49,19 +54,19 @@ def run_git(args, cwd=None, check=True):
 
 def extract_semver(tag):
     """X.Y.Z from a release tag, X.Y.Z-devN from a dev/ tag; "" otherwise."""
-    if tag.startswith(DEV_TAG_NAMESPACE):
-        match = DEV_SEMVER_PATTERN.search(tag)
-    else:
-        match = SEMVER_PATTERN.search(tag)
-    return match.group(0) if match else ""
+    pattern = DEV_TAG_PATTERN if tag.startswith(DEV_TAG_NAMESPACE) else RELEASE_TAG_PATTERN
+    match = pattern.fullmatch(tag)
+    return match.group(1) if match else ""
 
 
 def usable_tags(tags, channel):
-    """Release tags first; dev/ tags after them, and only on the development channel."""
-    release = [t for t in tags if not t.startswith(DEV_TAG_NAMESPACE)]
+    """Tags that carry a version: release tags first, then dev/ tags on the
+    development channel only. Tags with no version (markers, suffixed or
+    malformed versions) are dropped so they can't hide a valid one."""
+    release = [t for t in tags if not t.startswith(DEV_TAG_NAMESPACE) and extract_semver(t)]
     if channel != "development":
         return release
-    return release + [t for t in tags if t.startswith(DEV_TAG_NAMESPACE)]
+    return release + [t for t in tags if t.startswith(DEV_TAG_NAMESPACE) and extract_semver(t)]
 
 
 def without_namespace(tag):
@@ -191,7 +196,7 @@ def main(argv=None):
 
             # Write "<path> <version>" to submodule_versions.txt
             if bootloader_version:
-                f.write(f"{path} {version} {bootloader_version}\n")
+                f.write(f"{path} {version or MISSING} {bootloader_version}\n")
             else:
                 f.write(f"{path} {version}\n")
 

@@ -130,6 +130,17 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
         self.assertEqual(data["vehicleType"], _LAYOUT_VEHICLE_TYPE)
         self.assertEqual(data["operation"], "firmware-upgrade")
 
+    def test_missing_app_version_is_not_read_from_the_bootloader_field(self):
+        # collect_submodules.py writes "-" for a board with no app version.
+        result, output_text, _ = self.run_script(
+            submodule_versions=SUBMODULE_VERSIONS.replace(
+                "body-control-unit 4.0.0 2.1.1", "body-control-unit - 2.1.1"
+            )
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(output_text)
+        self.assertIn("Missing app version for board 'BCU'", result.stderr)
+
     def test_release_channel_refuses_development_builds(self):
         dev_bcu = SUBMODULE_VERSIONS.replace(
             "body-control-unit 4.0.0 2.1.1", "body-control-unit 4.0.1-dev98 2.1.2-dev98"
