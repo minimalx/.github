@@ -74,6 +74,27 @@ def without_namespace(tag):
     return tag[len(DEV_TAG_NAMESPACE):] if tag.startswith(DEV_TAG_NAMESPACE) else tag
 
 
+def nearest_tag(path, prefix, channel, max_skipped=50):
+    """The nearest tag reachable from HEAD that names <prefix> and carries a
+    version (dev/ ones too on the development channel). describe --match is a
+    glob, so a malformed tag (BCU_BL_v2.2.12_rc1) would win; each one is
+    excluded and the search repeated, so an older valid tag is still found."""
+    match = ["--match", f"{prefix}*"]
+    if channel == "development":
+        match += ["--match", f"{DEV_TAG_NAMESPACE}{prefix}*"]
+    exclude = []
+    for _ in range(max_skipped + 1):
+        tag = run_git(
+            ["-C", path, "describe", "--tags", "--abbrev=0", *match, *exclude, "HEAD"],
+            check=False,
+        )
+        if not tag or usable_tags([tag], channel):
+            return tag
+        print(f"Skipping bootloader tag without a version: {tag}")
+        exclude += ["--exclude", tag]
+    return ""
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -167,13 +188,7 @@ def main(argv=None):
                     # Bootloaders change rarely, so a release may not re-tag the
                     # bootloader at the app commit. Fall back to the most recent
                     # bootloader tag reachable from HEAD (the last valid one).
-                    match = ["--match", f"{bootloader_prefix}*"]
-                    if channel == "development":
-                        match += ["--match", f"{DEV_TAG_NAMESPACE}{bootloader_prefix}*"]
-                    nearest_boot_tag = run_git(
-                        ["-C", path, "describe", "--tags", "--abbrev=0", *match, "HEAD"],
-                        check=False,
-                    )
+                    nearest_boot_tag = nearest_tag(path, bootloader_prefix, channel)
                     if nearest_boot_tag:
                         print(f"Nearest bootloader tag: {nearest_boot_tag}")
                         bootloader_version = extract_semver(nearest_boot_tag)

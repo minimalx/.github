@@ -102,6 +102,20 @@ class CollectSubmodulesTest(unittest.TestCase):
                 self.bcu.tag(tag)
                 self.assertEqual(self.collect()["body-control-unit"], "- 2.2.11")
 
+    def test_bootloader_fallback_skips_tags_without_a_version(self):
+        # A stray bootloader tag nearer than the last release must not hide it.
+        git(self.bcu.path, "checkout", "-q", "-b", "rel", "BCU_APP_v4.4.8")
+        self.bcu.commit()
+        self.bcu.tag("BCU_BL_v2.2.12_rc1")
+        self.bcu.commit()
+        self.bcu.tag("BCU_BL_v2.2.12-rc2")
+        self.bcu.commit()
+        self.bcu.tag("BCU_APP_v4.4.9")
+        self.assertEqual(self.collect()["body-control-unit"], "4.4.9 2.2.11")
+        self.assertEqual(
+            self.collect("--channel", "development")["body-control-unit"], "4.4.9 2.2.11"
+        )
+
     def test_tags_without_a_version_do_not_hide_a_valid_one(self):
         self.bcu.tag("build-marker", "a-marker")
         self.assertEqual(
