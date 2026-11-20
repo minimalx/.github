@@ -22,6 +22,14 @@ inputs:
     description: "Release version used in the ordered firmware-upgrade manifest"
     required: false
     default: ""
+  channel:
+    description: >-
+      release (default): versions from release tags only; dev/ tags are ignored and any
+      -devN version fails the run. development: a board pinned at a development build
+      takes its X.Y.Z-devN from the commit's dev/ tag. Use development only on the
+      develop/* manifest branches, which publish to the dev AWS account.
+    required: false
+    default: "release"
   firmware-upgrade-artifact-name:
     description: "Artifact name for the ordered firmware-upgrade manifest"
     required: false
@@ -32,7 +40,9 @@ runs:
   steps:
     - name: Generate submodule_versions.txt
       shell: bash
-      run: python3 "${GITHUB_ACTION_PATH}/collect_submodules.py"
+      env:
+        INPUT_CHANNEL: ${{ inputs.channel }}
+      run: python3 "${GITHUB_ACTION_PATH}/collect_submodules.py" --channel "$INPUT_CHANNEL"
 
     - name: Generate release JSON
       shell: bash
@@ -49,8 +59,10 @@ runs:
         INPUT_VERSION: ${{ inputs.firmware-upgrade-version }}
         INPUT_EXT_VERSIONS: ${{ inputs.ext-versions }}
         INPUT_OUTPUT_FILE: ${{ inputs.firmware-upgrade-output-file }}
+        INPUT_CHANNEL: ${{ inputs.channel }}
       run: |
         python3 "${GITHUB_ACTION_PATH}/generate_firmware_upgrade_manifest.py" \
+          --channel "$INPUT_CHANNEL" \
           --layout-file "$INPUT_LAYOUT_FILE" \
           --version "$INPUT_VERSION" \
           --ext-versions "$INPUT_EXT_VERSIONS" \
