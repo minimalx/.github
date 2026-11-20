@@ -31,12 +31,13 @@ BOOTLOADER_TAG_PREFIXES = {
 BOOTLOADER_TAG_SUBSTRING = "_BL_"
 DEV_TAG_NAMESPACE = "dev/"
 CHANNELS = ("release", "development")
-# The version must be the whole end of the tag, after a name that doesn't end in a
-# digit, dot or sign: "BCU_APP_v4.4.9-rc1", "BCU_APP_v4.4.9_rc1" and
-# "BCU_APP_v4.4.9-rc.1.2.3" have no version, rather than 4.4.9 or 1.2.3.
-_START = r"(?<![0-9.+-])"
-RELEASE_TAG_PATTERN = re.compile(r"[^/]*" + _START + r"([0-9]+\.[0-9]+\.[0-9]+)")
-DEV_TAG_PATTERN = re.compile(r"dev/[^/]*" + _START + r"([0-9]+\.[0-9]+\.[0-9]+-dev[0-9]+)")
+# A tag is a name of letters and underscores (BCU_APP_v, MESC_, v, TCU_STACK_v)
+# followed by the version, and nothing else. "BCU_APP_v4.4.9-rc1",
+# "BCU_APP_v4.4.9_rc1" and "BCU_APP_v4.4.9-rc1.2.3" have no version, rather than
+# 4.4.9 or 1.2.3: the name can't contain an earlier version.
+_NAME = r"[A-Za-z_]*"
+RELEASE_TAG_PATTERN = re.compile(_NAME + r"([0-9]+\.[0-9]+\.[0-9]+)")
+DEV_TAG_PATTERN = re.compile(r"dev/" + _NAME + r"([0-9]+\.[0-9]+\.[0-9]+-dev[0-9]+)")
 # submodule_versions.txt is split on whitespace, so an empty field is written as
 # this, never as nothing: "bcu  2.2.11" would read the bootloader as the app.
 MISSING = "-"

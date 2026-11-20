@@ -89,7 +89,14 @@ class CollectSubmodulesTest(unittest.TestCase):
         self.assertEqual(self.collect()["body-control-unit"], "- 2.2.11")
 
     def test_release_refuses_any_suffix_or_trailing_version(self):
-        for tag in ("BCU_APP_v4.4.9_rc1", "BCU_APP_v4.4.9-rc.1.2.3", "BCU_APP_v4.4.9+b1"):
+        for tag in (
+            "BCU_APP_v4.4.9_rc1",
+            "BCU_APP_v4.4.9-rc.1.2.3",
+            "BCU_APP_v4.4.9-rc1.2.3",
+            "BCU_APP_v4.4.9+b1",
+            "BCU_APP_v4.4.9.1",
+            "rc4.4.9-BCU_APP_v1.2.3",
+        ):
             with self.subTest(tag=tag):
                 self.bcu.commit()
                 self.bcu.tag(tag)
