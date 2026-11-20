@@ -108,6 +108,9 @@ def main():
             name = parts[0]
             version = parts[1] if len(parts) >= 2 else ""
             bootloader_version = parts[2] if len(parts) >= 3 else ""
+            # collect_submodules.py writes "-" for a missing field.
+            version = "" if version == "-" else version
+            bootloader_version = "" if bootloader_version == "-" else bootloader_version
             entry = {"name": name, "version": version}
             if bootloader_version:
                 entry["bootloader_version"] = bootloader_version

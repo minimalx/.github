@@ -42,6 +42,12 @@ def parse_args():
         default=None,
         help="Optional external JSON file with additional version sources",
     )
+    parser.add_argument(
+        "--channel",
+        choices=("release", "development"),
+        default="release",
+        help="release (default) refuses any -devN version; development allows them",
+    )
     return parser.parse_args()
 
 
@@ -96,9 +102,10 @@ def load_submodule_versions(path: Path) -> dict[str, dict[str, str]]:
 
             source = parts[0]
             entry: dict[str, str] = {}
-            if len(parts) >= 2:
+            # collect_submodules.py writes "-" for a missing field.
+            if len(parts) >= 2 and parts[1] != "-":
                 entry["app"] = parts[1]
-            if len(parts) >= 3:
+            if len(parts) >= 3 and parts[2] != "-":
                 entry["boot"] = parts[2]
 
             if source in versions:
@@ -247,6 +254,18 @@ def resolve_version(
     )
 
 
+def development_versions(manifest: dict[str, object]) -> list[str]:
+    """Every -devN version in the manifest, as "<where> <version>"."""
+    found = []
+    if "-dev" in str(manifest["manifestVersion"]).lower():
+        found.append(f"manifestVersion {manifest['manifestVersion']}")
+    for board, fields in manifest["boards"].items():  # type: ignore[union-attr]
+        for field, version in fields.items():
+            if version is not None and "-dev" in str(version).lower():
+                found.append(f"{board}.{field} {version}")
+    return found
+
+
 def build_manifest(
     *,
     operation: str,
@@ -312,6 +331,15 @@ def main() -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    if args.channel == "release":
+        dev = development_versions(manifest)
+        if dev:
+            print(
+                "A release manifest can't contain development builds: " + ", ".join(dev),
+                file=sys.stderr,
+            )
+            return 1
 
     output_path = Path(args.output)
     output_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

@@ -46,6 +46,7 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
         output_name: str = "1.3.1.json",
         layout_text: str | None = None,
         ext_versions_text: str | None = None,
+        channel: str | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], str | None, str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -76,6 +77,8 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
             ]
             if ext_versions_text is not None:
                 command.extend(["--ext-versions", str(ext_versions_path)])
+            if channel is not None:
+                command.extend(["--channel", channel])
 
             result = subprocess.run(
                 command,
@@ -126,6 +129,49 @@ class GenerateFirmwareUpgradeManifestTests(unittest.TestCase):
         self.assertEqual(data["manifestVersion"], "v1.3.7")
         self.assertEqual(data["vehicleType"], _LAYOUT_VEHICLE_TYPE)
         self.assertEqual(data["operation"], "firmware-upgrade")
+
+    def test_missing_app_version_is_not_read_from_the_bootloader_field(self):
+        # collect_submodules.py writes "-" for a board with no app version.
+        result, output_text, _ = self.run_script(
+            submodule_versions=SUBMODULE_VERSIONS.replace(
+                "body-control-unit 4.0.0 2.1.1", "body-control-unit - 2.1.1"
+            )
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(output_text)
+        self.assertIn("Missing app version for board 'BCU'", result.stderr)
+
+    def test_release_channel_refuses_development_builds(self):
+        dev_bcu = SUBMODULE_VERSIONS.replace(
+            "body-control-unit 4.0.0 2.1.1", "body-control-unit 4.0.1-dev98 2.1.2-dev98"
+        )
+        for channel in (None, "release"):
+            result, output_text, _ = self.run_script(submodule_versions=dev_bcu, channel=channel)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(output_text)
+            self.assertIn("BCU.app 4.0.1-dev98", result.stderr)
+            self.assertIn("BCU.boot 2.1.2-dev98", result.stderr)
+
+    def test_release_channel_refuses_a_development_manifest_version(self):
+        result, _, _ = self.run_script(
+            submodule_versions=SUBMODULE_VERSIONS, version="1.3.2-dev5", output_name="x.json"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("manifestVersion v1.3.2-dev5", result.stderr)
+
+    def test_development_channel_allows_development_builds(self):
+        dev_bcu = SUBMODULE_VERSIONS.replace(
+            "body-control-unit 4.0.0 2.1.1", "body-control-unit 4.0.1-dev98 2.1.2-dev98"
+        )
+        result, output_text, _ = self.run_script(
+            submodule_versions=dev_bcu, version="1.3.2-dev5", output_name="1.3.2-dev5.json",
+            channel="development",
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        data = json.loads(output_text)
+        self.assertEqual(data["manifestVersion"], "v1.3.2-dev5")
+        self.assertEqual(data["boards"]["BCU"], {"app": "4.0.1-dev98", "boot": "2.1.2-dev98"})
+        self.assertEqual(data["boards"]["AVA"]["app"], "2.4.1")
 
     def test_cli_fails_when_required_boot_version_is_missing(self):
         result, _, _ = self.run_script(
